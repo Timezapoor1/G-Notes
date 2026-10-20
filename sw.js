@@ -1,7 +1,7 @@
 /* G-NOTES service worker: the app opens with no network once it has been loaded
    once. Pages and scripts are fetched fresh when online and kept for when not;
    everything else (fonts, the PDF reader) is kept the first time it is used. */
-const CACHE = 'gnotes-b86';
+const CACHE = 'gnotes-b87';
 const SHELL = ['./', 'index.html', 'config.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
