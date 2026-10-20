@@ -5791,7 +5791,56 @@ function renderBrainTitle(){
 }
 
 /* ---------- where a note's segment is, and how its links run ---------- */
-function segAngle(sg){ return -Math.PI / 2 + (sg.i + 0.5) * TAU / sg.n; }
+function segAngle(sg){ return -Math.PI / 2 + (sg.i + 0.5) * TAU / sg.n + (sg.node.rot || 0); }
+/* ---------- notes pivot round their badge ----------
+   A note's segment faces the notes it is linked to. Each ring is turned, and its notes
+   dealt into the slots nearest the direction of their partners, so links leave the ring
+   where they are going instead of crossing back over the badge. Notes with no link keep
+   their order (oldest first) in whatever slots are left. */
+const angDiff = (a, b) => { let d = (a - b) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; return d; };
+/// For every note on a ring: the direction its links pull it, or null with no link out of the topic.
+function ringPulls(nd){
+  const pulls = new Map();
+  for (const L of br.links){
+    const sa = br.segs.get(L.a), sb = br.segs.get(L.b); if (!sa || !sb || sa.node === sb.node) continue;
+    for (const [mine, other] of [[sa, sb], [sb, sa]]){
+      if (mine.node !== nd) continue;
+      const dx = other.node.x - nd.x, dy = other.node.y - nd.y, d = Math.hypot(dx, dy) || 1;
+      const v = pulls.get(mine.note.id) || [0, 0]; v[0] += dx / d; v[1] += dy / d; pulls.set(mine.note.id, v);
+    }
+  }
+  return pulls;
+}
+/// Deal the notes into the slots their links point at.
+function arrangeRing(nd){
+  const n = nd.notes.length; if (n < 2) return;
+  const pulls = ringPulls(nd); if (!pulls.size) return;
+  const base = k => -Math.PI / 2 + (k + 0.5) * TAU / n;
+  const pairs = [];
+  nd.notes.forEach((note, j) => { const v = pulls.get(note.id); if (!v) return; const want = Math.atan2(v[1], v[0]);
+    for (let k = 0; k < n; k++) pairs.push({j:j, k:k, d:Math.abs(angDiff(base(k), want))}); });
+  pairs.sort((p, q) => p.d - q.d);
+  const slotOf = new Map(), taken = new Set();
+  for (const p of pairs){ if (slotOf.has(p.j) || taken.has(p.k)) continue; slotOf.set(p.j, p.k); taken.add(p.k); }
+  const out = new Array(n); let free = 0;
+  nd.notes.forEach((note, j) => { if (slotOf.has(j)) out[slotOf.get(j)] = note; });
+  nd.notes.forEach((note, j) => { if (slotOf.has(j)) return; while (out[free]) free++; out[free] = note; });
+  nd.notes = out;
+  out.forEach((note, i) => { const sg = br.segs.get(note.id); if (sg) sg.i = i; });
+}
+const arrangeRings = () => { for (const nd of br.nodes) if (nd.kind === 'topic') arrangeRing(nd); };
+/// The turn that points the linked segments at their partners, eased so rings swing rather than jump.
+function pivotRings(){
+  for (const nd of br.nodes){
+    if (nd.kind !== 'topic') continue;
+    let sx = 0, sy = 0; const pulls = ringPulls(nd), n = nd.notes.length;
+    nd.notes.forEach((note, i) => { const v = pulls.get(note.id); if (!v) return;
+      const want = Math.atan2(v[1], v[0]), base = -Math.PI / 2 + (i + 0.5) * TAU / n, w = Math.hypot(v[0], v[1]);
+      sx += w * Math.cos(want - base); sy += w * Math.sin(want - base); });
+    const target = (sx || sy) ? Math.atan2(sy, sx) : 0;
+    nd.rot = (nd.rot || 0) + angDiff(target, nd.rot || 0) * 0.12;
+  }
+}
 function segPoint(sg, r){ const a = segAngle(sg); return [sg.node.x + Math.cos(a) * r, sg.node.y + Math.sin(a) * r, a]; }
 /// Every path is a cubic that leaves its segment straight out from the ring and is
 /// then steered clear of every badge, ring and method on the board: several
@@ -5876,6 +5925,7 @@ function createNoteLink(a, b){
   if (!L){ L = {key:key, a:a, b:b, rec:null, derived:false}; br.links.push(L); }
   const fresh = !L.rec;
   ensureLinkRec(L);
+  br.arranged = false; br.alpha = Math.max(br.alpha, 0.3);
   save(); renderBrainTitle();
   if (fresh) toast('Linked \u201c' + noteTitleOf(noteById(a)) + '\u201d and \u201c' + noteTitleOf(noteById(b)) + '\u201d');
   return L;
@@ -6016,7 +6066,10 @@ function brainFrame(ts){
       n.x += clamp(n.vx, -14, 14); n.y += clamp(n.vy, -14, 14);
     }
     br.alpha *= 0.985;
+    if (br.alpha > 0.05) br.arranged = false;
+    else if (!br.arranged){ br.arranged = true; arrangeRings(); }
   }
+  pivotRings();
   for (const n of N){
     if (n.kind === 'topic'){ if (n.t){ n.t.x = n.x; n.t.y = n.y; } else { n.sub.ux = n.x; n.sub.uy = n.y; } }
     else { n.m.x = n.x; n.m.y = n.y; }
@@ -6054,8 +6107,8 @@ function paintTopic(c, nd, em){
   }
   const span = TAU / Math.max(n, 1), gap = n === 1 ? 0.2 : Math.min(0.16, span * 0.3), cap = (w / 2) / rMid;
   for (let i = 0; i < n; i++){
-    const note = nd.notes[i], a0 = -Math.PI / 2 + i * span + gap / 2 + cap;
-    let a1 = -Math.PI / 2 + (i + 1) * span - gap / 2 - cap; if (a1 <= a0) a1 = a0 + 0.001;
+    const rot = nd.rot || 0, note = nd.notes[i], a0 = -Math.PI / 2 + rot + i * span + gap / 2 + cap;
+    let a1 = -Math.PI / 2 + rot + (i + 1) * span - gap / 2 - cap; if (a1 <= a0) a1 = a0 + 0.001;
     const full = pageHasWork(note), isSel = br.sel && br.sel.kind === 'note' && br.sel.id === note.id;
     const on = !em || em.notes.has(note.id) || sel;
     c.globalAlpha = lit ? (on ? 1 : 0.35) : 0.3;
@@ -6215,7 +6268,7 @@ function hitAt(sx, sy){
     const d = Math.hypot(wx - nd.x, wy - nd.y);
     if (d <= R0 + 4 + pad * .5) return {kind:'topic', nd:nd};
     if (nd.notes.length && d >= RING_IN - 6 - pad * .4 && d <= RING_OUT + 4 + pad * .6){
-      let a = Math.atan2(wy - nd.y, wx - nd.x) + Math.PI / 2; a = ((a % TAU) + TAU) % TAU;
+      let a = Math.atan2(wy - nd.y, wx - nd.x) + Math.PI / 2 - (nd.rot || 0); a = ((a % TAU) + TAU) % TAU;
       const i = Math.min(nd.notes.length - 1, Math.floor(a / (TAU / nd.notes.length)));
       return {kind:'seg', nd:nd, note:nd.notes[i]};
     }
@@ -8919,7 +8972,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b105';
+const BUILD = 'b106';
 // Home Screen mode on iPad: read the screen's vertical resolution and size the app to it,
 // instead of trusting the shorter area the page is told it has. Laid out in normal flow
 // (not fixed) so it is not clipped to that shorter area; the strip's colour carries on the app.
