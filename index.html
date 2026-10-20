@@ -8900,7 +8900,22 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b83';
+const BUILD = 'b84';
+// Home Screen mode on iPad can lay the page out a strip short of the real bottom edge
+// (the home-indicator area). Size the app to the whole screen instead of trusting 100%.
+(function(){
+  if (!navigator.standalone && !matchMedia('(display-mode: standalone)').matches) return;
+  const app = document.getElementById('app');
+  const fit = () => {
+    const sw = screen.width, sh = screen.height, land = innerWidth > innerHeight;
+    const full = land ? Math.min(sw, sh) : Math.max(sw, sh);
+    const h = Math.max(innerHeight, document.documentElement.clientHeight, full);
+    app.style.height = h + 'px'; app.style.bottom = 'auto';
+    window.scrollTo(0, 0);
+  };
+  fit();
+  addEventListener('resize', fit); addEventListener('orientationchange', () => setTimeout(fit, 250));
+})();
 // installable and offline: only where there is a real address to register against
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !window.claude){
   window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
