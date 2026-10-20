@@ -26,6 +26,7 @@ jobs:
         run: |
           mkdir dist
           cp index.html config.js manifest.webmanifest sw.js icon.svg icon-192.png icon-512.png icon-512-maskable.png apple-touch-icon.png dist/
+          cp -r splash dist/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
