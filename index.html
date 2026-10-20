@@ -70,10 +70,10 @@
 ::-webkit-scrollbar-track{background:transparent}
 *{box-sizing:border-box; margin:0; padding:0}
 [hidden]{display:none !important}
-html,body{height:100%; min-height:-webkit-fill-available; background:#1E1E1E}   /* never white behind the app, whatever the phone leaves uncovered */
+html,body{height:100%; min-height:100vh; min-height:100lvh; background:#1E1E1E}   /* never white behind the app, whatever the phone leaves uncovered */
 body{overscroll-behavior:none}
 #app{
-  position:fixed; top:0; left:0; right:0; bottom:0; display:flex; flex-direction:column;
+  position:fixed; top:0; left:0; right:0; bottom:0; height:100vh; height:100lvh; display:flex; flex-direction:column;
   background:var(--bg); color:var(--ink); font-family:var(--font-ui);
   -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;
   transition:background .45s ease, color .45s ease;
@@ -8918,7 +8918,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b97';
+const BUILD = 'b98';
 // Home Screen mode on iPad leaves a strip under the page that the page cannot paint on.
 // What it can do is choose that strip's colour, so it carries on what sits just above it.
 (function(){
