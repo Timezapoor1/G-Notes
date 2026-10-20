@@ -1,0 +1,6 @@
+# build output for the claude.ai artifact, regenerated from index.html
+artifact.html
+*.tmp
+.DS_Store
+node_modules/
+.claude/
