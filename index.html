@@ -5866,12 +5866,31 @@ function arrangeRings(){
   const was = new Map(rings.map(nd => [nd, nd.rot || 0]));
   const apply = (nd, order, rot) => { nd.notes = order; order.forEach((note, i) => { const sg = br.segs.get(note.id); if (sg) sg.i = i; }); nd.rot = rot; };
   const score = nd => tangle() + 0.02 * nd.notes.reduce((m, note, i) => m + (nd.chrono[i] === note ? 0 : 1), 0);
-  for (let pass = 0; pass < 3; pass++){
+  const spread = () => {          // nudge whole topics to wherever fewer links cross, never onto another topic
+    const tops = br.nodes.filter(n => n.kind === 'topic' && ringPulls(n).size);
+    let moved = false;
+    for (const nd of tops){
+      let bs = tangle(), bx = nd.x, by = nd.y; const x0 = nd.x, y0 = nd.y;
+      for (const r of [60, 130, 220]) for (let k = 0; k < 8; k++){
+        const x = x0 + Math.cos(k * TAU / 8) * r, y = y0 + Math.sin(k * TAU / 8) * r;
+        if (br.nodes.some(o => o !== nd && Math.hypot(o.x - x, o.y - y) < o.R + nd.R + 30)) continue;
+        nd.x = x; nd.y = y; const sc = tangle();
+        if (sc < bs - 0.3){ bs = sc; bx = x; by = y; }
+      }
+      nd.x = bx; nd.y = by; if (bx !== x0 || by !== y0) moved = true;
+    }
+    return moved;
+  };
+  for (let round = 0; round < 3; round++){
+  for (let pass = 0; pass < 4; pass++){
     let improved = false;
     for (const nd of rings){
       const n = nd.notes.length, base = nd.notes.slice(), cands = [], slot = TAU / n, rot0 = nd.rot || 0;
       for (let r = 1; r < n; r++) cands.push(base.slice(r).concat(base.slice(0, r)));        // turn the whole ring
-      for (let i = 0; i < n; i++){ const o = base.slice(), j = (i + 1) % n; [o[i], o[j]] = [o[j], o[i]]; cands.push(o); }   // swap neighbours
+      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++){
+        if (n > 9 && j - i > 1 && !(i === 0 && j === n - 1)) continue;                        // big rings: neighbours only
+        const o = base.slice(); [o[i], o[j]] = [o[j], o[i]]; cands.push(o);                    // swap any two notes
+      }
       cands.push(base);
       let bs = Infinity, bo = base, br0 = rot0;
       apply(nd, base, rot0); bs = score(nd);
@@ -5885,6 +5904,8 @@ function arrangeRings(){
       if (bo !== base || br0 !== rot0) improved = true;
     }
     if (!improved) break;
+  }
+  if (!spread()) break;
   }
   for (const nd of rings){ nd.rotGoal = nd.rot; nd.rot = was.get(nd); }   // swing there rather than jump
 }
@@ -9027,7 +9048,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b108';
+const BUILD = 'b109';
 // Home Screen mode on iPad: read the screen's vertical resolution and size the app to it,
 // instead of trusting the shorter area the page is told it has. Laid out in normal flow
 // (not fixed) so it is not clipped to that shorter area; the strip's colour carries on the app.
