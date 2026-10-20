@@ -5776,6 +5776,7 @@ function fitCamera(){
     const r = n.kind === 'topic' ? TOPIC_R + 10 : 30;
     minX = Math.min(minX, n.x - r); maxX = Math.max(maxX, n.x + r); minY = Math.min(minY, n.y - r); maxY = Math.max(maxY, n.y + r);
   }
+  if (br.regions) for (const sid in br.regions){ const rg = br.regions[sid]; minX = Math.min(minX, rg.x - rg.r); maxX = Math.max(maxX, rg.x + rg.r); minY = Math.min(minY, rg.y - rg.r - 40); maxY = Math.max(maxY, rg.y + rg.r); }
   const spanX = Math.max(maxX - minX, 200), spanY = Math.max(maxY - minY, 200);
   const k = clamp(Math.min(br.w / (spanX + 200), br.h / (spanY + 200)), 0.25, 1.4);
   br.cam = {x:(minX + maxX) / 2, y:(minY + maxY) / 2, k:k};
@@ -5905,8 +5906,10 @@ function layoutModel(key){
     const anc = anchor(tp.sub.id);
     return {key:tp.key, x:e ? e.x : tp.dx, y:e ? e.y : tp.dy, R:TOPIC_R, rot:e ? e.rot : 0, notes:notes, chrono:tp.notes.slice(), act:act[i],
             grp:tp.sub.id, ax:anc.x, ay:anc.y, lim:cosmos ? clusterR(tp.sub.id) - TOPIC_R : Infinity}; });
-  const sig = hashStr('v2;' + tops.map(tp => tp.key + ':' + tp.notes.join(',')).join('|') + '#' + links.map(L => linkKey(L.a, L.b)).sort().join(','));
-  return {key:key, tops:out, links:links, sig:sig};
+  const sig = hashStr('v3;' + tops.map(tp => tp.key + ':' + tp.notes.join(',')).join('|') + '#' + links.map(L => linkKey(L.a, L.b)).sort().join(','));
+  const regions = {};
+  if (cosmos && nS > 1) for (const sid of count.keys()){ const a = anchor(sid); regions[sid] = {x:Math.round(a.x), y:Math.round(a.y), r:Math.round(clusterR(sid))}; }
+  return {key:key, tops:out, links:links, sig:sig, regions:regions};
 }
 /// The search itself, a few milliseconds at a time. Calls done(best, startCost, bestCost) when it has finished.
 function annealModel(m, stale, done){
@@ -5992,7 +5995,7 @@ function annealModel(m, stale, done){
 function storeLayout(key, m, best){
   const tops = {};
   m.tops.forEach((tp, i) => { tops[tp.key] = {x:Math.round(best[i].x), y:Math.round(best[i].y), rot:Math.round(best[i].rot * 1000) / 1000, notes:best[i].notes}; });
-  (S.layout || (S.layout = {}))[key] = {sig:m.sig, tops:tops, t:Date.now()};
+  (S.layout || (S.layout = {}))[key] = {sig:m.sig, tops:tops, regions:m.regions, t:Date.now()};
   save();
   if (br.running && br.layoutKey === key) applyStoredLayout(true);
 }
@@ -6024,8 +6027,17 @@ function applyStoredLayout(animate){
     nd.notes = nd.notes.slice().sort((p, q) => (pos.has(p.id) ? pos.get(p.id) : 1e6) - (pos.has(q.id) ? pos.get(q.id) : 1e6));
     nd.notes.forEach((note, i) => { const sg = br.segs.get(note.id); if (sg) sg.i = i; });
   }
+  br.regions = (lay && key === 'cosmos' && lay.regions && Object.keys(lay.regions).length) ? lay.regions : null;
+  for (const nd of br.nodes){ if (nd.kind !== 'topic') continue; clampNode(nd); if (nd.hx !== undefined){ const q = {x:nd.hx, y:nd.hy, sub:nd.sub, R:nd.R}; clampNode(q); nd.hx = q.x; nd.hy = q.y; } }
   br.homed = !!lay;
   if (br.homed) br.alpha = 0;
+  if (animate) fitCamera();
+}
+/// In the cosmos a topic never leaves the circle drawn round its subject.
+function clampNode(nd){
+  const rg = br.regions && br.regions[nd.sub.id]; if (!rg) return;
+  const lim = rg.r - nd.R, dx = nd.x - rg.x, dy = nd.y - rg.y, d = Math.hypot(dx, dy);
+  if (d > lim && d > 0){ nd.x = rg.x + dx / d * lim; nd.y = rg.y + dy / d * lim; }
 }
 /// The turn that points the linked segments at their partners, eased so rings swing rather than jump.
 function pivotRings(){
@@ -6270,6 +6282,7 @@ function brainFrame(ts){
     if (n.kind === 'topic'){ if (n.t){ n.t.x = n.x; n.t.y = n.y; } else { n.sub.ux = n.x; n.sub.uy = n.y; } }
     else { n.m.x = n.x; n.m.y = n.y; }
   }
+  if (br.regions) for (const n of N) if (n.kind === 'topic') clampNode(n);
   paintBrain(ts);
 }
 function w2s(x, y){ return [ (x - br.cam.x) * br.cam.k + br.w/2, (y - br.cam.y) * br.cam.k + br.h/2 ]; }
@@ -6350,12 +6363,14 @@ function paintBrain(ts){
   c.globalAlpha = 1;
   if (UI.mode === 'cosmos'){
     for (const s of S.subjects){
-      const anchor = clusterAnchor(s.id), [sx, sy] = w2s(anchor.x, anchor.y), rad = 260 * k;
+      const rg = br.regions && br.regions[s.id];
+      const anchor = rg || clusterAnchor(s.id), [sx, sy] = w2s(anchor.x, anchor.y), rad = (rg ? rg.r : 260) * k;
       const hg = c.createRadialGradient(sx, sy, 0, sx, sy, rad);
-      hg.addColorStop(0, `hsl(${s.hue} 70% 55% / .07)`); hg.addColorStop(1, 'transparent');
+      hg.addColorStop(0, `hsl(${s.hue} 70% 55% / .05)`); hg.addColorStop(1, `hsl(${s.hue} 70% 55% / ${rg ? .11 : 0})`);
       c.fillStyle = hg; c.beginPath(); c.arc(sx, sy, rad, 0, Math.PI*2); c.fill();
-      c.font = '700 11px "Courier New", Courier, monospace'; c.fillStyle = `hsl(${s.hue} 60% 72% / .8)`; c.textAlign = 'center';
-      c.fillText(s.name.toUpperCase(), sx, sy - rad - 8);
+      if (rg){ c.strokeStyle = `hsl(${s.hue} 65% 62% / .55)`; c.lineWidth = Math.max(1.5, 2.5 * k); c.setLineDash([10 * k + 4, 8 * k + 4]); c.beginPath(); c.arc(sx, sy, rad, 0, Math.PI*2); c.stroke(); c.setLineDash([]); }
+      c.font = '700 ' + clamp(15 * k, 11, 20) + 'px "Courier New", Courier, monospace'; c.fillStyle = `hsl(${s.hue} 60% 74% / .92)`; c.textAlign = 'center';
+      c.fillText(s.name.toUpperCase(), sx, sy - rad - 10);
     }
   }
   const em = brainEmphasis();
@@ -9168,7 +9183,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b114';
+const BUILD = 'b115';
 // Home Screen mode on iPad: read the screen's vertical resolution and size the app to it,
 // instead of trusting the shorter area the page is told it has. Laid out in normal flow
 // (not fixed) so it is not clipped to that shorter area; the strip's colour carries on the app.
