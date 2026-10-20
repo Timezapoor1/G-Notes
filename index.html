@@ -5811,34 +5811,89 @@ function ringPulls(nd){
   }
   return pulls;
 }
-/// Deal the notes into the slots their links point at.
-function arrangeRing(nd){
-  const n = nd.notes.length; if (n < 2) return;
-  const pulls = ringPulls(nd); if (!pulls.size) return;
-  const base = k => -Math.PI / 2 + (k + 0.5) * TAU / n;
-  const pairs = [];
-  nd.notes.forEach((note, j) => { const v = pulls.get(note.id); if (!v) return; const want = Math.atan2(v[1], v[0]);
-    for (let k = 0; k < n; k++) pairs.push({j:j, k:k, d:Math.abs(angDiff(base(k), want))}); });
-  pairs.sort((p, q) => p.d - q.d);
-  const slotOf = new Map(), taken = new Set();
-  for (const p of pairs){ if (slotOf.has(p.j) || taken.has(p.k)) continue; slotOf.set(p.j, p.k); taken.add(p.k); }
-  const out = new Array(n); let free = 0;
-  nd.notes.forEach((note, j) => { if (slotOf.has(j)) out[slotOf.get(j)] = note; });
-  nd.notes.forEach((note, j) => { if (slotOf.has(j)) return; while (out[free]) free++; out[free] = note; });
-  nd.notes = out;
-  out.forEach((note, i) => { const sg = br.segs.get(note.id); if (sg) sg.i = i; });
+/// The turn that points a ring's linked segments at their partners, for the notes in a given order.
+const rotTarget = nd => rotTargetFor(nd, nd.notes);
+function rotTargetFor(nd, order){
+  const pulls = ringPulls(nd), n = order.length; let sx = 0, sy = 0;
+  order.forEach((note, i) => { const v = pulls.get(note.id); if (!v) return;
+    const want = Math.atan2(v[1], v[0]), base = -Math.PI / 2 + (i + 0.5) * TAU / n, w = Math.hypot(v[0], v[1]);
+    sx += w * Math.cos(want - base); sy += w * Math.sin(want - base); });
+  return (sx || sy) ? Math.atan2(sy, sx) : 0;
 }
-const arrangeRings = () => { for (const nd of br.nodes) if (nd.kind === 'topic') arrangeRing(nd); };
+const segsCross = (p, q, r, t) => {
+  const d1x = q[0] - p[0], d1y = q[1] - p[1], d2x = t[0] - r[0], d2y = t[1] - r[1], den = d1x * d2y - d1y * d2x;
+  if (!den) return false;
+  const u = ((r[0] - p[0]) * d2y - (r[1] - p[1]) * d2x) / den, v = ((r[0] - p[0]) * d1y - (r[1] - p[1]) * d1x) / den;
+  return u > 0.02 && u < 0.98 && v > 0.02 && v < 0.98;
+};
+/// A link drawn quickly: the same leave-the-ring-outwards curve the real one starts from.
+function roughLink(L, topics){
+  const sa = br.segs.get(L.a), sb = br.segs.get(L.b);
+  const A = segPoint(sa, RING_OUT + 5), B = segPoint(sb, RING_OUT + 5);
+  const d = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1, k = Math.max(46, d * 0.4);
+  const P1 = [A[0] + Math.cos(A[2]) * k, A[1] + Math.sin(A[2]) * k], P2 = [B[0] + Math.cos(B[2]) * k, B[1] + Math.sin(B[2]) * k];
+  const pts = [], blocked = [];
+  for (let i = 0; i <= 8; i++){
+    const t = i / 8, u = 1 - t;
+    pts.push([u*u*u*A[0] + 3*u*u*t*P1[0] + 3*u*t*t*P2[0] + t*t*t*B[0], u*u*u*A[1] + 3*u*u*t*P1[1] + 3*u*t*t*P2[1] + t*t*t*B[1]]);
+  }
+  let hits = 0;
+  for (const nd of topics){ if (nd === sa.node || nd === sb.node) continue;
+    for (let i = 1; i < 8; i++) if (Math.hypot(pts[i][0] - nd.x, pts[i][1] - nd.y) < RING_OUT + 12){ hits++; break; } }
+  return {pts:pts, a:L.a, b:L.b, hits:hits, len:d};
+}
+/// How tangled the board is: crossings between links, links through someone else's icon, and a little for length.
+function tangle(){
+  const topics = br.nodes.filter(n => n.kind === 'topic'), ls = br.links.map(L => roughLink(L, topics));
+  let c = 0;
+  for (let i = 0; i < ls.length; i++){
+    c += ls[i].hits * 0.6 + ls[i].len * 0.00005;
+    for (let j = i + 1; j < ls.length; j++){
+      const p = ls[i], q = ls[j];
+      if (p.a === q.a || p.a === q.b || p.b === q.a || p.b === q.b) continue;
+      let hit = false;
+      for (let x = 0; x < 8 && !hit; x++) for (let y = 0; y < 8; y++) if (segsCross(p.pts[x], p.pts[x + 1], q.pts[y], q.pts[y + 1])){ hit = true; break; }
+      if (hit) c++;
+    }
+  }
+  return c;
+}
+/// Turn each ring - and where needed swap neighbouring notes - to whatever leaves the fewest links crossing.
+function arrangeRings(){
+  const rings = br.nodes.filter(n => n.kind === 'topic' && n.notes.length >= 2 && ringPulls(n).size);
+  if (!rings.length || br.links.length < 2) return;
+  for (const nd of rings) nd.chrono = nd.chrono || nd.notes.slice();
+  const was = new Map(rings.map(nd => [nd, nd.rot || 0]));
+  const apply = (nd, order, rot) => { nd.notes = order; order.forEach((note, i) => { const sg = br.segs.get(note.id); if (sg) sg.i = i; }); nd.rot = rot; };
+  const score = nd => tangle() + 0.02 * nd.notes.reduce((m, note, i) => m + (nd.chrono[i] === note ? 0 : 1), 0);
+  for (let pass = 0; pass < 3; pass++){
+    let improved = false;
+    for (const nd of rings){
+      const n = nd.notes.length, base = nd.notes.slice(), cands = [], slot = TAU / n, rot0 = nd.rot || 0;
+      for (let r = 1; r < n; r++) cands.push(base.slice(r).concat(base.slice(0, r)));        // turn the whole ring
+      for (let i = 0; i < n; i++){ const o = base.slice(), j = (i + 1) % n; [o[i], o[j]] = [o[j], o[i]]; cands.push(o); }   // swap neighbours
+      cands.push(base);
+      let bs = Infinity, bo = base, br0 = rot0;
+      apply(nd, base, rot0); bs = score(nd);
+      for (const o of cands){
+        for (const rot of [rotTargetFor(nd, o), 0, slot * 0.25, slot * 0.5, slot * 0.75, rot0]){
+          apply(nd, o, rot); const sc = score(nd);
+          if (sc < bs - 1e-6){ bs = sc; bo = o; br0 = rot; }
+        }
+      }
+      apply(nd, bo, br0);
+      if (bo !== base || br0 !== rot0) improved = true;
+    }
+    if (!improved) break;
+  }
+  for (const nd of rings){ nd.rotGoal = nd.rot; nd.rot = was.get(nd); }   // swing there rather than jump
+}
 /// The turn that points the linked segments at their partners, eased so rings swing rather than jump.
 function pivotRings(){
   for (const nd of br.nodes){
     if (nd.kind !== 'topic') continue;
-    let sx = 0, sy = 0; const pulls = ringPulls(nd), n = nd.notes.length;
-    nd.notes.forEach((note, i) => { const v = pulls.get(note.id); if (!v) return;
-      const want = Math.atan2(v[1], v[0]), base = -Math.PI / 2 + (i + 0.5) * TAU / n, w = Math.hypot(v[0], v[1]);
-      sx += w * Math.cos(want - base); sy += w * Math.sin(want - base); });
-    const target = (sx || sy) ? Math.atan2(sy, sx) : 0;
-    nd.rot = (nd.rot || 0) + angDiff(target, nd.rot || 0) * 0.12;
+    const goal = nd.rotGoal !== undefined ? nd.rotGoal : rotTarget(nd);
+    nd.rot = (nd.rot || 0) + angDiff(goal, nd.rot || 0) * 0.12;
   }
 }
 function segPoint(sg, r){ const a = segAngle(sg); return [sg.node.x + Math.cos(a) * r, sg.node.y + Math.sin(a) * r, a]; }
@@ -8972,7 +9027,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b106';
+const BUILD = 'b108';
 // Home Screen mode on iPad: read the screen's vertical resolution and size the app to it,
 // instead of trusting the shorter area the page is told it has. Laid out in normal flow
 // (not fixed) so it is not clipped to that shorter area; the strip's colour carries on the app.
