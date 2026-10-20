@@ -224,7 +224,7 @@ section[hidden]{display:none !important}
 
 /* ---- editor ---- */
 #editor{flex:1; display:flex; flex-direction:column; min-height:0}
-#edHead{display:flex; align-items:center; gap:8px; padding:26px 18px 0}
+#edHead{display:flex; align-items:center; gap:8px; padding:40px 18px 0}
 #noteTitle{
   flex:1; border:none; background:transparent; font-family:var(--font-display);
   font-size:20px; font-weight:700; padding:4px 2px; min-width:0;
@@ -5906,7 +5906,7 @@ function layoutModel(key){
     const anc = anchor(tp.sub.id);
     return {key:tp.key, x:e ? e.x : tp.dx, y:e ? e.y : tp.dy, R:TOPIC_R, rot:e ? e.rot : 0, notes:notes, chrono:tp.notes.slice(), act:act[i],
             grp:tp.sub.id, ax:anc.x, ay:anc.y, lim:cosmos ? clusterR(tp.sub.id) - TOPIC_R : Infinity}; });
-  const sig = hashStr('v3;' + tops.map(tp => tp.key + ':' + tp.notes.join(',')).join('|') + '#' + links.map(L => linkKey(L.a, L.b)).sort().join(','));
+  const sig = hashStr('v6;' + tops.map(tp => tp.key + ':' + tp.notes.join(',')).join('|') + '#' + links.map(L => linkKey(L.a, L.b)).sort().join(','));
   const regions = {};
   if (cosmos && nS > 1) for (const sid of count.keys()){ const a = anchor(sid); regions[sid] = {x:Math.round(a.x), y:Math.round(a.y), r:Math.round(clusterR(sid))}; }
   return {key:key, tops:out, links:links, sig:sig, regions:regions};
@@ -5921,31 +5921,51 @@ function annealModel(m, stale, done){
   const cost = st => {
     where.clear();
     st.forEach((t, ti) => t.notes.forEach((id, i) => where.set(id, {ti:ti, i:i, n:t.notes.length})));
+    // each ring turns to face the topics its notes link to: the best turn for its order, in closed form
+    const fx = new Float64Array(st.length), fy = new Float64Array(st.length);
+    for (const L of links){
+      const wa = where.get(L.a), wb = where.get(L.b); if (!wa || !wb || wa.ti === wb.ti) continue;
+      for (const [w, o] of [[wa, wb], [wb, wa]]){
+        const t = st[w.ti], q = st[o.ti], want = Math.atan2(q.y - t.y, q.x - t.x), base = -Math.PI / 2 + (w.i + 0.5) * TAU / w.n;
+        fx[w.ti] += Math.cos(want - base); fy[w.ti] += Math.sin(want - base);
+      }
+    }
+    st.forEach((t, ti) => { t.rot = (fx[ti] || fy[ti]) ? Math.atan2(fy[ti], fx[ti]) : 0; });
     const pt = w => { const t = st[w.ti], a = -Math.PI / 2 + (w.i + 0.5) * TAU / w.n + t.rot;
       return [t.x + Math.cos(a) * (RING_OUT + 5), t.y + Math.sin(a) * (RING_OUT + 5), a]; };
+    let c = 0;
     const ls = [];
     for (const L of links){
       const wa = where.get(L.a), wb = where.get(L.b); if (!wa || !wb) continue;
-      const A = pt(wa), B = pt(wb), d = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1, k = Math.max(46, d * 0.4);
+      const A = pt(wa), B = pt(wb), d = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1, k = Math.max(40, d * 0.28);
+      if (wa.ti !== wb.ti){
+        // a note whose segment faces away from where its link goes makes the link loop round the badge
+        const ta = st[wa.ti], tb = st[wb.ti];
+        c += 1.2 * (1 - Math.cos(A[2] - Math.atan2(tb.y - ta.y, tb.x - ta.x)));
+        c += 1.2 * (1 - Math.cos(B[2] - Math.atan2(ta.y - tb.y, ta.x - tb.x)));
+      }
       const P1x = A[0] + Math.cos(A[2]) * k, P1y = A[1] + Math.sin(A[2]) * k, P2x = B[0] + Math.cos(B[2]) * k, P2y = B[1] + Math.sin(B[2]) * k;
       const xs = [], ys = [];
+      let len = 0;
       for (let i = 0; i <= 8; i++){ const t = i / 8, u = 1 - t;
-        xs.push(u*u*u*A[0] + 3*u*u*t*P1x + 3*u*t*t*P2x + t*t*t*B[0]); ys.push(u*u*u*A[1] + 3*u*u*t*P1y + 3*u*t*t*P2y + t*t*t*B[1]); }
+        xs.push(u*u*u*A[0] + 3*u*u*t*P1x + 3*u*t*t*P2x + t*t*t*B[0]); ys.push(u*u*u*A[1] + 3*u*u*t*P1y + 3*u*t*t*P2y + t*t*t*B[1]);
+        if (i) len += Math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]); }
       let hits = 0;
-      for (let ti = 0; ti < st.length; ti++){ if (ti === wa.ti || ti === wb.ti) continue;
-        for (let i = 1; i < 8; i++) if (Math.hypot(xs[i] - st[ti].x, ys[i] - st[ti].y) < RING_OUT + 12){ hits++; break; } }
-      ls.push({xs:xs, ys:ys, a:L.a, b:L.b, hits:hits, len:d});
+      for (let ti = 0; ti < st.length; ti++){
+        const own = ti === wa.ti || ti === wb.ti, r = own ? RING_OUT - 2 : RING_OUT + 12;   // its own badge counts too
+        for (let i = 1; i < 8; i++) if (Math.hypot(xs[i] - st[ti].x, ys[i] - st[ti].y) < r){ hits++; break; }
+      }
+      c += hits * 1.0 + len * 0.0012;
+      ls.push({xs:xs, ys:ys, a:L.a, b:L.b});
     }
-    let c = 0;
     for (let i = 0; i < ls.length; i++){
-      c += ls[i].hits * 0.6 + ls[i].len * 0.00005;
       for (let j = i + 1; j < ls.length; j++){
         const p = ls[i], q = ls[j];
         if (p.a === q.a || p.a === q.b || p.b === q.a || p.b === q.b) continue;
         let hit = false;
         for (let x = 0; x < 8 && !hit; x++) for (let y = 0; y < 8; y++)
           if (segsCross([p.xs[x], p.ys[x]], [p.xs[x + 1], p.ys[x + 1]], [q.xs[y], q.ys[y]], [q.xs[y + 1], q.ys[y + 1]])){ hit = true; break; }
-        if (hit) c++;
+        if (hit) c += 1;
       }
     }
     st.forEach((t, ti) => t.notes.forEach((id, i) => { if (chrono[ti][i] !== id) c += 0.02; }));
@@ -5960,8 +5980,8 @@ function annealModel(m, stale, done){
     }
     for (const ti of act){ const t = st[ti]; if (t.notes.length > 1){ const k = Math.floor(Math.random() * t.notes.length); t.notes = t.notes.slice(k).concat(t.notes.slice(0, k)); } }
   };
-  const startCost = cost(copy(base));
-  let best = copy(base), bestCost = startCost;
+  const first = copy(base), startCost = cost(first);
+  let best = first, bestCost = startCost;
   if (act.length < 2 || links.length < 2){ done(best, startCost, bestCost); return; }
   const RESTARTS = 8, ITER = 1400, T0 = 2.5;
   let restart = 0, it = 0, st = null, cur = 0;
@@ -5977,7 +5997,7 @@ function annealModel(m, stale, done){
       if (mv < 0.25){ const oj = act[Math.floor(Math.random() * act.length)]; if (oj === ti || st[oj].grp !== t.grp) moved = false; else { const o = st[oj]; [t.x, o.x] = [o.x, t.x]; [t.y, o.y] = [o.y, t.y]; } }
       else if (mv < 0.45){ const a = Math.random() * TAU, r = 40 + Math.random() * 160, x = t.x + Math.cos(a) * r, y = t.y + Math.sin(a) * r; if (clear(st, ti, x, y)){ t.x = x; t.y = y; } else moved = false; }
       else if (mv < 0.75 && t.notes.length >= 2){ const i = Math.floor(Math.random() * t.notes.length), j = Math.floor(Math.random() * t.notes.length); if (i === j) moved = false; else [t.notes[i], t.notes[j]] = [t.notes[j], t.notes[i]]; }
-      else if (t.notes.length >= 2){ const k = 1 + Math.floor(Math.random() * (t.notes.length - 1)); t.notes = t.notes.slice(k).concat(t.notes.slice(0, k)); t.rot += (Math.random() - 0.5) * (TAU / t.notes.length); }
+      else if (t.notes.length >= 2){ const k = 1 + Math.floor(Math.random() * (t.notes.length - 1)); t.notes = t.notes.slice(k).concat(t.notes.slice(0, k)); }
       else moved = false;
       it++;
       if (moved){
@@ -6077,14 +6097,15 @@ function routeCurve(A, B, da, db, own){
   };
   const cands = [];
   for (const kf of [0.3, 0.5, 0.8, 1.1])
-    for (const sf of [0, .2, -.2, .4, -.4, .7, -.7, 1.1, -1.1, 1.6, -1.6])
-      cands.push({kk:Math.max(46, kf * d), s:sf * Math.max(d, 160), cost:Math.abs(sf) * 2 + kf});
+    for (const sf of [0, .2, -.2, .4, -.4, .7, -.7, 1.1, -1.1])
+      cands.push({kk:Math.max(46, kf * d), s:sf * Math.max(d, 160), cost:Math.abs(sf) * 2 + kf * 0.5});
   cands.sort((p, q) => p.cost - q.cost);
-  let best = null, bh = 1e9;
+  // the gentlest curve that does not run through anything; a slight graze beats a wild loop
+  let best = null, bs = Infinity;
   for (const c of cands){
-    const g = mk(c.kk, c.s), h = hits(g);
-    if (h === 0) return g;
-    if (h < bh){ bh = h; best = g; }
+    if (c.cost >= bs) break;
+    const g = mk(c.kk, c.s), sc = c.cost + hits(g) * 0.35;
+    if (sc < bs){ bs = sc; best = g; }
   }
   return best;
 }
@@ -6092,10 +6113,15 @@ function routeCurve(A, B, da, db, own){
 /// anything in the way.
 function linkGeom(L){
   const sa = br.segs.get(L.a), sb = br.segs.get(L.b);
+  const ck = L.key + '|' + sa.i + '/' + sa.n + '|' + sb.i + '/' + sb.n;
+  if (br.geomCache && br.geomCache.has(ck)) return br.geomCache.get(ck);
   const A = segPoint(sa, RING_OUT + 5), B = segPoint(sb, RING_OUT + 5);
-  const da = [Math.cos(A[2]), Math.sin(A[2])], db = [Math.cos(B[2]), Math.sin(B[2])];
-  const g = routeCurve(A, B, da, db, [sa.node, sb.node]);
+  // exactly the curve the arrangement was scored on: out of each ring along its segment, then across.
+  // The arrangement keeps it clear of other topics, so what was optimised is what is drawn.
+  const d = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1, k = Math.max(40, d * 0.28);
+  const g = {A:A, B:B, P1:[A[0] + Math.cos(A[2]) * k, A[1] + Math.sin(A[2]) * k], P2:[B[0] + Math.cos(B[2]) * k, B[1] + Math.sin(B[2]) * k]};
   g.ha = sa.node.hue; g.hb = sb.node.hue;
+  if (br.geomCache) br.geomCache.set(ck, g);
   return g;
 }
 /// A method's dashed trail to a note's segment: leaves the method, arrives from
@@ -6374,6 +6400,9 @@ function paintBrain(ts){
     }
   }
   const em = brainEmphasis();
+  // the routed curves only change when something on the board has moved
+  const gs = br.nodes.map(n => Math.round(n.x) + ',' + Math.round(n.y) + ',' + Math.round((n.rot || 0) * 200)).join(';');
+  if (gs !== br.geomSig){ br.geomSig = gs; br.geomCache = new Map(); }
   // links
   for (const L of br.links){
     const gm = linkGeom(L); L.g = gm;
@@ -9183,7 +9212,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b115';
+const BUILD = 'b117';
 // Home Screen mode on iPad: read the screen's vertical resolution and size the app to it,
 // instead of trusting the shorter area the page is told it has. Laid out in normal flow
 // (not fixed) so it is not clipped to that shorter area; the strip's colour carries on the app.
