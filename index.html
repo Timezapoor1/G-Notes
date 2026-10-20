@@ -1456,7 +1456,7 @@ function idbGet(key){
 
 /* ---------- state ---------- */
 const STORE_KEY = 'synapse.v1';
-function emptyState(){ return {v:1, subjects:[], notes:[], concepts:[], methods:[], links:[], dismissed:[], papers:[], topics:[], noteLinks:[], qstats:{}, gone:{}, savedAt:0}; }
+function emptyState(){ return {v:1, subjects:[], notes:[], concepts:[], methods:[], links:[], dismissed:[], papers:[], topics:[], noteLinks:[], layout:{}, qstats:{}, gone:{}, savedAt:0}; }
 let S = emptyState();
 let storageOk = true;
 let storageKind = 'none';
@@ -1514,6 +1514,7 @@ function save(){
     storageOk = wrote;
     DIAG.saveMs = Math.round(performance.now() - t0);
     cloudMark();
+    layoutSoon();
   }, 350);
 }
 
@@ -5599,7 +5600,8 @@ function brainEnter(){
   brResize();
   buildGraph();
   renderBrainTitle();
-  br.alpha = 1; br.running = true;
+  br.alpha = br.homed ? 0 : 1; br.running = true;
+  refreshLayout(layoutKey());
   if (!br.raf) br.raf = requestAnimationFrame(brainFrame);
 }
 function brainLeave(){
@@ -5713,7 +5715,6 @@ function buildGraph(){
   const subjects = UI.mode === 'cosmos' ? S.subjects : S.subjects.filter(s => s.id === UI.subjectId);
   const sids = new Set(subjects.map(s => s.id));
   br.nodes = []; br.links = []; br.segs = new Map(); br.pulses = [];
-  br.optToken = (br.optToken || 0) + 1; br.untangling = false;
   for (const sub of subjects){
     const anchor = clusterAnchor(sub.id);
     const groups = new Map();
@@ -5762,6 +5763,7 @@ function buildGraph(){
     br.nodes.push({kind:'method', key:'m' + m.id, m:m, name:m.name, hue:methodHue(sub ? sub.hue : 258), x:m.x, y:m.y, vx:0, vy:0, covers:covers, anchor:anchor,
                    r:Math.min(12 + Math.sqrt(covers.length) * 4, 22), R:30});
   }
+  applyStoredLayout(false);
   if (br.sel && br.sel.kind === 'link' && !br.links.some(L => L.key === br.sel.key)) br.sel = null;
   if (br.sel && br.sel.kind === 'note' && !br.segs.has(br.sel.id)) br.sel = null;
   $('#brainEmpty').hidden = br.nodes.length > 0;
@@ -5788,7 +5790,7 @@ function renderBrainTitle(){
   if (!s){ el.innerHTML = '<div class="bt1">No subject selected</div>'; return; }
   const nt = topicsOf(s.id).length, nn = brainNotes(s.id).length;
   el.innerHTML = `<div class="bt1"><span class="dot" style="--c:${hueColor(s.hue)}"></span>${esc(s.name)}</div>
-    <div class="bt2">${nt} topic${nt===1?'':'s'} &middot; ${nn} note${nn===1?'':'s'} &middot; ${br.links.length} link${br.links.length===1?'':'s'}${br.untangling ? ' &middot; untangling&hellip;' : ''}</div>`;
+    <div class="bt2">${nt} topic${nt===1?'':'s'} &middot; ${nn} note${nn===1?'':'s'} &middot; ${br.links.length} link${br.links.length===1?'':'s'}</div>`;
 }
 
 /* ---------- where a note's segment is, and how its links run ---------- */
@@ -5859,55 +5861,52 @@ function tangle(){
   }
   return c;
 }
-/// Shuffle the whole board looking for less tangle: topics swap places and drift, notes change
-/// their place in a ring, rings turn. Annealing - a worse move is sometimes kept early on, so it
-/// can climb out of a poor arrangement - and the best arrangement seen is the one that stays.
-function annealBoard(ms){
-  const tops = br.nodes.filter(n => n.kind === 'topic' && ringPulls(n).size);
-  if (tops.length < 2 || br.links.length < 2) return;
-  for (const nd of tops) nd.chrono = nd.chrono || nd.notes.slice();
-  const apply = nd => { nd.notes.forEach((note, i) => { const sg = br.segs.get(note.id); if (sg) sg.i = i; }); };
-  const cost = () => tangle() + 0.02 * tops.reduce((m, nd) => m + nd.notes.reduce((q, note, i) => q + (nd.chrono[i] === note ? 0 : 1), 0), 0);
-  const snap = () => tops.map(nd => ({nd:nd, x:nd.x, y:nd.y, rot:nd.rot || 0, notes:nd.notes.slice()}));
-  const restore = st => { for (const e of st){ e.nd.x = e.x; e.nd.y = e.y; e.nd.rot = e.rot; e.nd.notes = e.notes.slice(); apply(e.nd); } };
-  const clear = (nd, x, y) => !br.nodes.some(o => o !== nd && Math.hypot(o.x - x, o.y - y) < o.R + nd.R + 30);
-  const t0 = performance.now(); let cur = cost(), best = cur, bestSt = snap(), it = 0;
-  while (performance.now() - t0 < ms){
-    const T = Math.max(0.05, 2.5 * (1 - (performance.now() - t0) / ms)), mv = Math.random(), undo = snap();
-    const nd = tops[Math.floor(Math.random() * tops.length)];
-    if (mv < 0.25){                                   // two topics swap places
-      const o = tops[Math.floor(Math.random() * tops.length)]; if (o === nd) continue;
-      const x = nd.x, y = nd.y; nd.x = o.x; nd.y = o.y; o.x = x; o.y = y;
-    } else if (mv < 0.45){                            // a topic drifts
-      const a = Math.random() * TAU, r = 40 + Math.random() * 160, x = nd.x + Math.cos(a) * r, y = nd.y + Math.sin(a) * r;
-      if (!clear(nd, x, y)) continue; nd.x = x; nd.y = y;
-    } else if (mv < 0.75 && nd.notes.length >= 2){    // two notes trade places on the ring
-      const i = Math.floor(Math.random() * nd.notes.length); let j = Math.floor(Math.random() * nd.notes.length); if (i === j) continue;
-      [nd.notes[i], nd.notes[j]] = [nd.notes[j], nd.notes[i]]; apply(nd);
-    } else if (nd.notes.length >= 2){                 // the ring turns
-      const k = 1 + Math.floor(Math.random() * (nd.notes.length - 1));
-      nd.notes = nd.notes.slice(k).concat(nd.notes.slice(0, k)); apply(nd); nd.rot = (nd.rot || 0) + (Math.random() - 0.5) * (TAU / nd.notes.length);
-    } else continue;
-    const c = cost(); it++;
-    if (c <= cur || Math.random() < Math.exp((cur - c) / T)){ cur = c; if (c < best - 1e-9){ best = c; bestSt = snap(); } }
-    else restore(undo);
+/* ---------- the permanent arrangement ----------
+   Where every topic sits, and in what order each ring holds its notes and how far it is turned,
+   is worked out once and kept in the notebook (S.layout) - one for each subject's brain and one for
+   the cosmos. It is worked out out of sight, a few milliseconds at a time, on a private copy of the
+   board, and only when the board has grown (a new note, topic or link). The search starts from the
+   kept arrangement and from several scrambled ones, and only the one with the fewest crossings is
+   kept. Dragging a topic is allowed, but it floats back to its place in the arrangement. */
+const layoutKey = () => UI.mode === 'cosmos' ? 'cosmos' : 'brain:' + UI.subjectId;
+const LAY = {tok:{}, run:{}, timer:null};
+const hashStr = str => { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + str.length; };
+/// The board as it would be built for a view, straight from the notebook (no screen needed).
+function layoutModel(key){
+  const cosmos = key === 'cosmos', nS = S.subjects.length;
+  const subs = cosmos ? S.subjects : S.subjects.filter(sb => 'brain:' + sb.id === key);
+  const tops = [], noteTop = new Map();
+  for (const sub of subs){
+    const groups = new Map();
+    for (const t of topicsOf(sub.id)) groups.set(t.id, {key:'t' + t.id, notes:[]});
+    const loose = [];
+    for (const n of brainNotes(sub.id)){ const t = noteTopic(n); if (t && groups.has(t.id)) groups.get(t.id).notes.push(n.id); else loose.push(n.id); }
+    for (const [id, g] of groups) tops.push({key:g.key, sub:sub, notes:g.notes});
+    if (loose.length) tops.push({key:'u' + sub.id, sub:sub, notes:loose});
   }
-  restore(bestSt);
+  tops.forEach((tp, i) => tp.notes.forEach(id => noteTop.set(id, i)));
+  const lmap = new Map();
+  const add = (a, b) => { if (a !== b && noteTop.has(a) && noteTop.has(b)) lmap.set(linkKey(a, b), {a:a, b:b}); };
+  for (const r of (S.noteLinks || [])) add(r.a, r.b);
+  for (const n of S.notes) for (const pg of notePages(n)) for (const l of (pg.links || [])){ const tg = linkTarget(l); if (tg) add(n.id, tg.n.id); }
+  const links = [...lmap.values()];
+  const act = tops.map(() => false);
+  for (const L of links){ const x = noteTop.get(L.a), y = noteTop.get(L.b); if (x !== y){ act[x] = true; act[y] = true; } }
+  const anchor = sid => { if (!cosmos || nS <= 1) return {x:0, y:0}; const idx = S.subjects.findIndex(q => q.id === sid), R = 360 + nS * 60, a = idx / nS * TAU - Math.PI / 2; return {x:Math.cos(a) * R, y:Math.sin(a) * R}; };
+  const stored = ((S.layout || {})[key] || {}).tops || {}, per = new Map();
+  tops.forEach(tp => { if (!per.has(tp.sub.id)) per.set(tp.sub.id, []); per.get(tp.sub.id).push(tp); });
+  for (const [sid, list] of per){ const m = list.length, anc = anchor(sid), r = m === 1 ? 0 : 230 + m * 28;
+    list.forEach((tp, i) => { tp.dx = anc.x + Math.cos(i / m * TAU - Math.PI / 2) * r; tp.dy = anc.y + Math.sin(i / m * TAU - Math.PI / 2) * r; }); }
+  const out = tops.map((tp, i) => { const e = stored[tp.key], pos = e ? new Map(e.notes.map((id, k) => [id, k])) : null;
+    const notes = pos ? tp.notes.slice().sort((p, q) => (pos.has(p) ? pos.get(p) : 1e6) - (pos.has(q) ? pos.get(q) : 1e6)) : tp.notes.slice();
+    return {key:tp.key, x:e ? e.x : tp.dx, y:e ? e.y : tp.dy, R:TOPIC_R, rot:e ? e.rot : 0, notes:notes, chrono:tp.notes.slice(), act:act[i]}; });
+  const sig = hashStr(tops.map(tp => tp.key + ':' + tp.notes.join(',')).join('|') + '#' + links.map(L => linkKey(L.a, L.b)).sort().join(','));
+  return {key:key, tops:out, links:links, sig:sig};
 }
-/* ---------- untangling in the background ----------
-   The search runs on a private copy of the board, a few milliseconds at a time between frames,
-   so nothing moves while it works. It starts over from several scrambled layouts as well as the
-   current one, and only the arrangement with the fewest crossings is ever shown: the topics
-   glide to their new places and the notes swing round their rings. */
-function startUntangle(){
-  const token = br.optToken = (br.optToken || 0) + 1;
-  const live = br.nodes.filter(n => n.kind === 'topic');
-  if (br.links.length < 2) return;
-  const pulls = new Map(live.map(nd => [nd, ringPulls(nd).size > 0]));
-  if (live.filter(nd => pulls.get(nd)).length < 2) return;
-  const links = br.links.map(L => ({a:L.a, b:L.b}));
-  const base = live.map(nd => ({x:nd.x, y:nd.y, R:nd.R, rot:nd.rot || 0, notes:nd.notes.map(n => n.id), act:pulls.get(nd)}));
-  const chrono = live.map(nd => (nd.chrono || nd.notes).map(n => n.id));
+/// The search itself, a few milliseconds at a time. Calls done(best, startCost, bestCost) when it has finished.
+function annealModel(m, stale, done){
+  const links = m.links, chrono = m.tops.map(t => t.chrono);
+  const base = m.tops.map(t => ({x:t.x, y:t.y, R:t.R, rot:t.rot, notes:t.notes.slice(), act:t.act}));
   const act = base.map((t, i) => i).filter(i => base[i].act);
   const copy = st => st.map(t => ({x:t.x, y:t.y, R:t.R, rot:t.rot, notes:t.notes.slice(), act:t.act}));
   const where = new Map();
@@ -5945,20 +5944,21 @@ function startUntangle(){
     return c;
   };
   const clear = (st, ti, x, y) => !st.some((o, oi) => oi !== ti && Math.hypot(o.x - x, o.y - y) < o.R + st[ti].R + 30);
-  const scramble = st => {                                   // a different starting layout: the topics trade places at random
+  const scramble = st => {
     const ps = act.map(i => [st[i].x, st[i].y]); for (let i = ps.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [ps[i], ps[j]] = [ps[j], ps[i]]; }
     act.forEach((ti, k) => { st[ti].x = ps[k][0]; st[ti].y = ps[k][1]; });
     for (const ti of act){ const t = st[ti]; if (t.notes.length > 1){ const k = Math.floor(Math.random() * t.notes.length); t.notes = t.notes.slice(k).concat(t.notes.slice(0, k)); } }
   };
-  const RESTARTS = 8, ITER = 1400;
-  let restart = 0, it = 0, st = null, cur = 0, T0 = 2.5;
   const startCost = cost(copy(base));
   let best = copy(base), bestCost = startCost;
-  br.untangling = true; renderBrainTitle();
+  if (act.length < 2 || links.length < 2){ done(best, startCost, bestCost); return; }
+  const RESTARTS = 8, ITER = 1400, T0 = 2.5;
+  let restart = 0, it = 0, st = null, cur = 0;
   const begin = () => { st = copy(base); if (restart > 0) scramble(st); cur = cost(st); it = 0; };
   begin();
   const slice = () => {
-    if (token !== br.optToken) return;                      // the board changed: this search is stale
+    if (stale()) return;
+    if (typeof ed !== 'undefined' && ed.strokeId !== null){ setTimeout(slice, 120); return; }     // never while the pen is down
     const t0 = performance.now();
     while (performance.now() - t0 < 9 && restart < RESTARTS){
       const T = Math.max(0.05, T0 * (1 - it / ITER)), mv = Math.random(), ti = act[Math.floor(Math.random() * act.length)], t = st[ti];
@@ -5976,76 +5976,48 @@ function startUntangle(){
       }
       if (it >= ITER){ restart++; if (restart < RESTARTS) begin(); }
     }
-    if (restart < RESTARTS) setTimeout(slice, 0); else finish();
-  };
-  const finish = () => {
-    if (token !== br.optToken) return;
-    br.untangling = false; renderBrainTitle();
-    if (bestCost >= startCost - 0.4) return;                // nothing better than what is already on show
-    live.forEach((nd, i) => {
-      const b = best[i]; if (!b.act) return;
-      nd.chrono = nd.chrono || nd.notes.slice();
-      const byId = new Map(nd.notes.map(n => [n.id, n]));
-      nd.notes = b.notes.map(id => byId.get(id)).filter(Boolean);
-      nd.notes.forEach((note, k) => { const sg = br.segs.get(note.id); if (sg) sg.i = k; });
-      nd.rotGoal = b.rot; nd.gx = b.x; nd.gy = b.y;
-    });
-    br.alpha = Math.min(br.alpha, 0.01);
-    toast('Untangled: ' + Math.round(startCost) + ' → ' + Math.round(bestCost) + ' crossings');
+    if (restart < RESTARTS) setTimeout(slice, 0); else done(best, startCost, bestCost);
   };
   setTimeout(slice, 30);
 }
-/// Turn each ring - and where needed swap neighbouring notes - to whatever leaves the fewest links crossing.
-function arrangeRings(){
-  annealBoard(Math.min(900, 250 + br.links.length * 25));
-  const rings = br.nodes.filter(n => n.kind === 'topic' && n.notes.length >= 2 && ringPulls(n).size);
-  if (!rings.length || br.links.length < 2) return;
-  for (const nd of rings) nd.chrono = nd.chrono || nd.notes.slice();
-  const was = new Map(rings.map(nd => [nd, nd.rot || 0]));
-  const apply = (nd, order, rot) => { nd.notes = order; order.forEach((note, i) => { const sg = br.segs.get(note.id); if (sg) sg.i = i; }); nd.rot = rot; };
-  const score = nd => tangle() + 0.02 * nd.notes.reduce((m, note, i) => m + (nd.chrono[i] === note ? 0 : 1), 0);
-  const spread = () => {          // nudge whole topics to wherever fewer links cross, never onto another topic
-    const tops = br.nodes.filter(n => n.kind === 'topic' && ringPulls(n).size);
-    let moved = false;
-    for (const nd of tops){
-      let bs = tangle(), bx = nd.x, by = nd.y; const x0 = nd.x, y0 = nd.y;
-      for (const r of [60, 130, 220]) for (let k = 0; k < 8; k++){
-        const x = x0 + Math.cos(k * TAU / 8) * r, y = y0 + Math.sin(k * TAU / 8) * r;
-        if (br.nodes.some(o => o !== nd && Math.hypot(o.x - x, o.y - y) < o.R + nd.R + 30)) continue;
-        nd.x = x; nd.y = y; const sc = tangle();
-        if (sc < bs - 0.3){ bs = sc; bx = x; by = y; }
-      }
-      nd.x = bx; nd.y = by; if (bx !== x0 || by !== y0) moved = true;
-    }
-    return moved;
-  };
-  for (let round = 0; round < 1; round++){
-  for (let pass = 0; pass < 2; pass++){
-    let improved = false;
-    for (const nd of rings){
-      const n = nd.notes.length, base = nd.notes.slice(), cands = [], slot = TAU / n, rot0 = nd.rot || 0;
-      for (let r = 1; r < n; r++) cands.push(base.slice(r).concat(base.slice(0, r)));        // turn the whole ring
-      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++){
-        if (n > 9 && j - i > 1 && !(i === 0 && j === n - 1)) continue;                        // big rings: neighbours only
-        const o = base.slice(); [o[i], o[j]] = [o[j], o[i]]; cands.push(o);                    // swap any two notes
-      }
-      cands.push(base);
-      let bs = Infinity, bo = base, br0 = rot0;
-      apply(nd, base, rot0); bs = score(nd);
-      for (const o of cands){
-        for (const rot of [rotTargetFor(nd, o), 0, slot * 0.25, slot * 0.5, slot * 0.75, rot0]){
-          apply(nd, o, rot); const sc = score(nd);
-          if (sc < bs - 1e-6){ bs = sc; bo = o; br0 = rot; }
-        }
-      }
-      apply(nd, bo, br0);
-      if (bo !== base || br0 !== rot0) improved = true;
-    }
-    if (!improved) break;
+/// Keep the arrangement in the notebook, and if that view is on screen let it glide there.
+function storeLayout(key, m, best){
+  const tops = {};
+  m.tops.forEach((tp, i) => { tops[tp.key] = {x:Math.round(best[i].x), y:Math.round(best[i].y), rot:Math.round(best[i].rot * 1000) / 1000, notes:best[i].notes}; });
+  (S.layout || (S.layout = {}))[key] = {sig:m.sig, tops:tops, t:Date.now()};
+  save();
+  if (br.running && br.layoutKey === key) applyStoredLayout(true);
+}
+/// Work out the arrangement for a view if the board has grown since the kept one.
+function refreshLayout(key){
+  const m = layoutModel(key); if (!m.tops.length) return;
+  const cur = (S.layout || {})[key];
+  if ((cur && cur.sig === m.sig) || LAY.run[key] === m.sig) return;
+  const tok = LAY.tok[key] = (LAY.tok[key] || 0) + 1;
+  LAY.run[key] = m.sig;
+  annealModel(m, () => LAY.tok[key] !== tok, (best) => { if (LAY.tok[key] !== tok) return; LAY.run[key] = null; storeLayout(key, m, best); });
+}
+function layoutCheck(){
+  if (typeof ed !== 'undefined' && ed.strokeId !== null){ layoutSoon(2500); return; }
+  try { refreshLayout('cosmos'); for (const sb of S.subjects) refreshLayout('brain:' + sb.id); } catch(e){}
+}
+function layoutSoon(delay){ clearTimeout(LAY.timer); LAY.timer = setTimeout(layoutCheck, delay === undefined ? 5000 : delay); }
+/// Put every topic, ring order and ring turn of the view on screen where the kept arrangement says.
+function applyStoredLayout(animate){
+  const key = layoutKey(); br.layoutKey = key;
+  const lay = (S.layout || {})[key];
+  for (const nd of br.nodes){
+    if (nd.kind !== 'topic') continue;
+    const e = lay && lay.tops[nd.key];
+    if (!e){ nd.hx = nd.x; nd.hy = nd.y; continue; }
+    nd.hx = e.x; nd.hy = e.y; nd.rotGoal = e.rot;
+    if (!animate){ nd.x = e.x; nd.y = e.y; nd.rot = e.rot; }
+    const pos = new Map(e.notes.map((id, i) => [id, i]));
+    nd.notes = nd.notes.slice().sort((p, q) => (pos.has(p.id) ? pos.get(p.id) : 1e6) - (pos.has(q.id) ? pos.get(q.id) : 1e6));
+    nd.notes.forEach((note, i) => { const sg = br.segs.get(note.id); if (sg) sg.i = i; });
   }
-  }
-  for (const nd of rings){ nd.rotGoal = nd.rot; nd.rot = was.get(nd); }   // swing there rather than jump
-  fitCamera();
+  br.homed = !!lay;
+  if (br.homed) br.alpha = 0;
 }
 /// The turn that points the linked segments at their partners, eased so rings swing rather than jump.
 function pivotRings(){
@@ -6139,7 +6111,7 @@ function createNoteLink(a, b){
   if (!L){ L = {key:key, a:a, b:b, rec:null, derived:false}; br.links.push(L); }
   const fresh = !L.rec;
   ensureLinkRec(L);
-  br.arranged = false; br.alpha = Math.max(br.alpha, 0.3);
+  layoutSoon();
   save(); renderBrainTitle();
   if (fresh) toast('Linked \u201c' + noteTitleOf(noteById(a)) + '\u201d and \u201c' + noteTitleOf(noteById(b)) + '\u201d');
   return L;
@@ -6148,7 +6120,7 @@ function removeNoteLink(key){
   const L = linkOf(key); if (!L || !L.rec) return;
   bury([L.rec]);
   S.noteLinks = (S.noteLinks || []).filter(r => r !== L.rec);
-  save(); buildGraph(); renderBrainTitle();
+  save(); buildGraph(); renderBrainTitle(); layoutSoon();
 }
 
 /* ---------- formulas on links ---------- */
@@ -6244,7 +6216,7 @@ function brainFrame(ts){
     }
   }
   const N = br.nodes;
-  if (br.alpha > 0.012 || br.drag){
+  if (!br.homed && (br.alpha > 0.012 || br.drag)){
     const alpha = Math.max(br.alpha, br.drag ? 0.12 : 0), floor = Math.max(alpha, 0.1);
     for (let i = 0; i < N.length; i++){
       const a = N[i];
@@ -6280,12 +6252,13 @@ function brainFrame(ts){
       n.x += clamp(n.vx, -14, 14); n.y += clamp(n.vy, -14, 14);
     }
     br.alpha *= 0.985;
-    if (br.alpha > 0.05) br.arranged = false;
-    else if (!br.arranged){ br.arranged = true; startUntangle(); }
   }
   pivotRings();
+  if (br.homed) for (const n of N){
+    if (n.kind !== 'topic' || n.hx === undefined || (br.drag && br.drag.node === n)) continue;
+    n.x += (n.hx - n.x) * 0.07; n.y += (n.hy - n.y) * 0.07;                          // floats back to its place
+  }
   for (const n of N){
-    if (n.gx !== undefined){ n.x += (n.gx - n.x) * 0.1; n.y += (n.gy - n.y) * 0.1; if (Math.hypot(n.gx - n.x, n.gy - n.y) < 0.5){ n.x = n.gx; n.y = n.gy; n.gx = undefined; n.gy = undefined; fitCamera(); } }
     if (n.kind === 'topic'){ if (n.t){ n.t.x = n.x; n.t.y = n.y; } else { n.sub.ux = n.x; n.sub.uy = n.y; } }
     else { n.m.x = n.x; n.m.y = n.y; }
   }
@@ -9187,7 +9160,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b112';
+const BUILD = 'b113';
 // Home Screen mode on iPad: read the screen's vertical resolution and size the app to it,
 // instead of trusting the shorter area the page is told it has. Laid out in normal flow
 // (not fixed) so it is not clipped to that shorter area; the strip's colour carries on the app.
@@ -9288,6 +9261,7 @@ const withTimeout = (p, ms) => Promise.race([p, new Promise(res => setTimeout(re
   if (!UI.subjectId) UI.subjectId = S.subjects[0]?.id || null;
   if (!UI.noteId && UI.subjectId) UI.noteId = notesOf(UI.subjectId)[0]?.id || null;
   renderAll();
+  layoutSoon(2500);
   startHome();
   if (cloud.restored) toast('Notes restored from your account');
 })();
