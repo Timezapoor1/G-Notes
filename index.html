@@ -8918,33 +8918,23 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b91';
-// TEMPORARY measurement box (tap it to hide) - tracks down the strip under the app on iPad
-try {
-  window.addEventListener('load', () => {
-    const app = document.getElementById('app');
-    const box = document.createElement('div');
-    box.style.cssText = 'position:fixed;left:6px;bottom:44px;z-index:99999;background:rgba(0,0,0,.88);color:#0f0;font:12px/1.35 monospace;padding:5px 7px;border-radius:5px;white-space:pre;max-width:90vw';
-    box.addEventListener('click', () => box.remove());
-    document.body.appendChild(box);
-    const probe = document.createElement('div');
-    probe.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)';
-    document.body.appendChild(probe);
-    const tick = () => {
-      try {
-        const cs = getComputedStyle(probe), r = app.getBoundingClientRect(), vv = window.visualViewport;
-        box.textContent = [
-          'inner ' + innerWidth + 'x' + innerHeight + ' client ' + document.documentElement.clientHeight,
-          'screen ' + screen.width + 'x' + screen.height + ' avail ' + screen.availHeight + ' vv ' + (vv ? Math.round(vv.height) : '-'),
-          'inset top ' + cs.paddingTop + ' bottom ' + cs.paddingBottom + ' dpr ' + devicePixelRatio,
-          'app top ' + Math.round(r.top) + ' bottom ' + Math.round(r.bottom) + ' h ' + Math.round(r.height),
-          'standalone ' + navigator.standalone + ' ' + BUILD
-        ].join('\n');
-      } catch (e) { box.textContent = 'err ' + e; }
-    };
-    setInterval(tick, 800); tick();
-  });
-} catch (e) {}
+const BUILD = 'b92';
+// Home Screen mode on iPad leaves a strip under the page that the page cannot paint on.
+// What it can do is choose that strip's colour, so it carries on what sits just above it:
+// the sidebar's colour under the sidebar, the paper's (or the brain's) under the rest.
+(function(){
+  if (!navigator.standalone && !matchMedia('(display-mode: standalone)').matches) return;
+  const app = document.getElementById('app'), root = document.documentElement;
+  const sync = () => {
+    const night = app.classList.contains('world-night');
+    const side = (!app.classList.contains('side-closed') && innerWidth > 860) ? 272 : 0;
+    const main = night ? '#0B0B12' : '#1E1E1E', sb = '#2A2A2B';
+    const bg = side ? 'linear-gradient(to right, ' + sb + ' ' + side + 'px, ' + main + ' ' + side + 'px)' : main;
+    root.style.background = bg; document.body.style.background = 'transparent';
+  };
+  new MutationObserver(sync).observe(app, {attributes:true, attributeFilter:['class']});
+  addEventListener('resize', sync); sync();
+})();
 // installable and offline: only where there is a real address to register against
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !window.claude){
   window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
