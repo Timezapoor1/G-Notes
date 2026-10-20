@@ -273,7 +273,8 @@ section[hidden]{display:none !important}
 #page{position:absolute; inset:0; width:100%; height:100%; touch-action:none; display:block}
 #toolbar{
   position:absolute; bottom:calc(14px + env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%);
-  display:flex; align-items:center; gap:2px; padding:6px 8px;
+  display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:2px; padding:6px 8px;
+  width:max-content; max-width:calc(100% - 16px);
   background:var(--surface); border:1px solid var(--line); border-radius:6px; box-shadow:var(--shadow);
   z-index:20;
 }
@@ -8918,7 +8919,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b100';
+const BUILD = 'b101';
 // Home Screen mode on iPad: read the screen's vertical resolution and size the app to it,
 // instead of trusting the shorter area the page is told it has. Laid out in normal flow
 // (not fixed) so it is not clipped to that shorter area; the strip's colour carries on the app.
