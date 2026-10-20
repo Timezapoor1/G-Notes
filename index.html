@@ -52,10 +52,10 @@
 ::-webkit-scrollbar-track{background:transparent}
 *{box-sizing:border-box; margin:0; padding:0}
 [hidden]{display:none !important}
-html,body{height:100%}
+html,body{height:100%; background:#1E1E1E}   /* never white behind the app, whatever the phone leaves uncovered */
 body{overscroll-behavior:none}
 #app{
-  position:fixed; inset:0; display:flex; flex-direction:column;
+  position:fixed; top:0; left:0; right:0; bottom:0; height:100vh; height:100dvh; display:flex; flex-direction:column;
   background:var(--bg); color:var(--ink); font-family:var(--font-ui);
   -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;
   transition:background .45s ease, color .45s ease;
@@ -936,7 +936,7 @@ section[hidden]{display:none !important}
 
 /* ---- status bar ---- */
 #status{
-  height:calc(26px + env(safe-area-inset-bottom)); padding:0 14px env(safe-area-inset-bottom);
+  height:calc(30px + env(safe-area-inset-bottom)); padding:0 14px env(safe-area-inset-bottom);
   flex:0 0 auto; background:var(--status-bg); color:#fff;
   display:flex; align-items:center; gap:18px; font-size:11.5px; white-space:nowrap; overflow:hidden;
 }
@@ -8900,7 +8900,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b81';
+const BUILD = 'b82';
 // installable and offline: only where there is a real address to register against
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !window.claude){
   window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
