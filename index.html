@@ -85,7 +85,7 @@ input,textarea{font-family:var(--font-ui); color:var(--ink); -webkit-user-select
 
 /* ---- top bar ---- */
 #top{
-  height:calc(var(--top-h) + 16px); flex:0 0 auto; display:flex; align-items:center; gap:10px;
+  height:calc(var(--top-h) + 32px); flex:0 0 auto; display:flex; align-items:center; gap:10px;
   padding:0 12px; padding-top:env(safe-area-inset-top);
   background:var(--surface); border-bottom:1px solid var(--line);
   transition:background .45s ease, border-color .45s ease;
@@ -8919,7 +8919,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b103';
+const BUILD = 'b104';
 // Home Screen mode on iPad: read the screen's vertical resolution and size the app to it,
 // instead of trusting the shorter area the page is told it has. Laid out in normal flow
 // (not fixed) so it is not clipped to that shorter area; the strip's colour carries on the app.
