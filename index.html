@@ -10,6 +10,8 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="apple-touch-startup-image" href="splash/1668x2224.png" media="(device-width: 834px) and (device-height: 1112px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="splash/2224x1668.png" media="(device-width: 834px) and (device-height: 1112px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
 <link rel="apple-touch-startup-image" href="splash/2064x2752.png" media="(device-width: 1032px) and (device-height: 1376px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
 <link rel="apple-touch-startup-image" href="splash/2752x2064.png" media="(device-width: 1032px) and (device-height: 1376px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
 <link rel="apple-touch-startup-image" href="splash/2048x2732.png" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
@@ -8916,7 +8918,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b89';
+const BUILD = 'b90';
 // installable and offline: only where there is a real address to register against
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !window.claude){
   window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
