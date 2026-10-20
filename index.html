@@ -67,7 +67,7 @@ input,textarea{font-family:var(--font-ui); color:var(--ink); -webkit-user-select
 
 /* ---- top bar ---- */
 #top{
-  height:var(--top-h); flex:0 0 auto; display:flex; align-items:center; gap:10px;
+  height:calc(var(--top-h) + env(safe-area-inset-top)); flex:0 0 auto; display:flex; align-items:center; gap:10px;
   padding:0 12px; padding-top:env(safe-area-inset-top);
   background:var(--surface); border-bottom:1px solid var(--line);
   transition:background .45s ease, border-color .45s ease;
@@ -91,7 +91,7 @@ input,textarea{font-family:var(--font-ui); color:var(--ink); -webkit-user-select
   background:var(--seg-bg); border:1px solid var(--line);
   border-radius:999px; box-shadow:var(--sunk);
   height:calc(var(--top-h) - 16px);
-  position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+  position:absolute; left:50%; top:calc(50% + env(safe-area-inset-top) / 2); transform:translate(-50%,-50%);
 }
 .seg button{
   display:flex; align-items:center; height:100%;
@@ -8900,7 +8900,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b84';
+const BUILD = 'b85';
 // Home Screen mode on iPad can lay the page out a strip short of the real bottom edge
 // (the home-indicator area). Size the app to the whole screen instead of trusting 100%.
 (function(){
