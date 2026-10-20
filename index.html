@@ -5858,8 +5858,44 @@ function tangle(){
   }
   return c;
 }
+/// Shuffle the whole board looking for less tangle: topics swap places and drift, notes change
+/// their place in a ring, rings turn. Annealing - a worse move is sometimes kept early on, so it
+/// can climb out of a poor arrangement - and the best arrangement seen is the one that stays.
+function annealBoard(ms){
+  const tops = br.nodes.filter(n => n.kind === 'topic' && ringPulls(n).size);
+  if (tops.length < 2 || br.links.length < 2) return;
+  for (const nd of tops) nd.chrono = nd.chrono || nd.notes.slice();
+  const apply = nd => { nd.notes.forEach((note, i) => { const sg = br.segs.get(note.id); if (sg) sg.i = i; }); };
+  const cost = () => tangle() + 0.02 * tops.reduce((m, nd) => m + nd.notes.reduce((q, note, i) => q + (nd.chrono[i] === note ? 0 : 1), 0), 0);
+  const snap = () => tops.map(nd => ({nd:nd, x:nd.x, y:nd.y, rot:nd.rot || 0, notes:nd.notes.slice()}));
+  const restore = st => { for (const e of st){ e.nd.x = e.x; e.nd.y = e.y; e.nd.rot = e.rot; e.nd.notes = e.notes.slice(); apply(e.nd); } };
+  const clear = (nd, x, y) => !br.nodes.some(o => o !== nd && Math.hypot(o.x - x, o.y - y) < o.R + nd.R + 30);
+  const t0 = performance.now(); let cur = cost(), best = cur, bestSt = snap(), it = 0;
+  while (performance.now() - t0 < ms){
+    const T = Math.max(0.05, 2.5 * (1 - (performance.now() - t0) / ms)), mv = Math.random(), undo = snap();
+    const nd = tops[Math.floor(Math.random() * tops.length)];
+    if (mv < 0.25){                                   // two topics swap places
+      const o = tops[Math.floor(Math.random() * tops.length)]; if (o === nd) continue;
+      const x = nd.x, y = nd.y; nd.x = o.x; nd.y = o.y; o.x = x; o.y = y;
+    } else if (mv < 0.45){                            // a topic drifts
+      const a = Math.random() * TAU, r = 40 + Math.random() * 160, x = nd.x + Math.cos(a) * r, y = nd.y + Math.sin(a) * r;
+      if (!clear(nd, x, y)) continue; nd.x = x; nd.y = y;
+    } else if (mv < 0.75 && nd.notes.length >= 2){    // two notes trade places on the ring
+      const i = Math.floor(Math.random() * nd.notes.length); let j = Math.floor(Math.random() * nd.notes.length); if (i === j) continue;
+      [nd.notes[i], nd.notes[j]] = [nd.notes[j], nd.notes[i]]; apply(nd);
+    } else if (nd.notes.length >= 2){                 // the ring turns
+      const k = 1 + Math.floor(Math.random() * (nd.notes.length - 1));
+      nd.notes = nd.notes.slice(k).concat(nd.notes.slice(0, k)); apply(nd); nd.rot = (nd.rot || 0) + (Math.random() - 0.5) * (TAU / nd.notes.length);
+    } else continue;
+    const c = cost(); it++;
+    if (c <= cur || Math.random() < Math.exp((cur - c) / T)){ cur = c; if (c < best - 1e-9){ best = c; bestSt = snap(); } }
+    else restore(undo);
+  }
+  restore(bestSt);
+}
 /// Turn each ring - and where needed swap neighbouring notes - to whatever leaves the fewest links crossing.
 function arrangeRings(){
+  annealBoard(Math.min(900, 250 + br.links.length * 25));
   const rings = br.nodes.filter(n => n.kind === 'topic' && n.notes.length >= 2 && ringPulls(n).size);
   if (!rings.length || br.links.length < 2) return;
   for (const nd of rings) nd.chrono = nd.chrono || nd.notes.slice();
@@ -5881,8 +5917,8 @@ function arrangeRings(){
     }
     return moved;
   };
-  for (let round = 0; round < 3; round++){
-  for (let pass = 0; pass < 4; pass++){
+  for (let round = 0; round < 1; round++){
+  for (let pass = 0; pass < 2; pass++){
     let improved = false;
     for (const nd of rings){
       const n = nd.notes.length, base = nd.notes.slice(), cands = [], slot = TAU / n, rot0 = nd.rot || 0;
@@ -5905,9 +5941,9 @@ function arrangeRings(){
     }
     if (!improved) break;
   }
-  if (!spread()) break;
   }
   for (const nd of rings){ nd.rotGoal = nd.rot; nd.rot = was.get(nd); }   // swing there rather than jump
+  fitCamera();
 }
 /// The turn that points the linked segments at their partners, eased so rings swing rather than jump.
 function pivotRings(){
@@ -9048,7 +9084,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b109';
+const BUILD = 'b111';
 // Home Screen mode on iPad: read the screen's vertical resolution and size the app to it,
 // instead of trusting the shorter area the page is told it has. Laid out in normal flow
 // (not fixed) so it is not clipped to that shorter area; the strip's colour carries on the app.
