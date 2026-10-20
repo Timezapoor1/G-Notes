@@ -5892,23 +5892,28 @@ function layoutModel(key){
   const links = [...lmap.values()];
   const act = tops.map(() => false);
   for (const L of links){ const x = noteTop.get(L.a), y = noteTop.get(L.b); if (x !== y){ act[x] = true; act[y] = true; } }
-  const anchor = sid => { if (!cosmos || nS <= 1) return {x:0, y:0}; const idx = S.subjects.findIndex(q => q.id === sid), R = 360 + nS * 60, a = idx / nS * TAU - Math.PI / 2; return {x:Math.cos(a) * R, y:Math.sin(a) * R}; };
+  const count = new Map(); tops.forEach(tp => count.set(tp.sub.id, (count.get(tp.sub.id) || 0) + 1));
+  const clusterR = sid => { const m = count.get(sid) || 1; return (m === 1 ? 0 : 230 + m * 28) + TOPIC_R + 70; };      // how far a subject's topics may spread from its middle
+  const ringR = (() => { let big = 0; for (const sid of count.keys()) big = Math.max(big, clusterR(sid)); return nS > 1 ? Math.max(360 + nS * 60, (big * 2 + 120) / (2 * Math.sin(Math.PI / nS))) : 0; })();
+  const anchor = sid => { if (!cosmos || nS <= 1) return {x:0, y:0}; const idx = S.subjects.findIndex(q => q.id === sid), a = idx / nS * TAU - Math.PI / 2; return {x:Math.cos(a) * ringR, y:Math.sin(a) * ringR}; };
   const stored = ((S.layout || {})[key] || {}).tops || {}, per = new Map();
   tops.forEach(tp => { if (!per.has(tp.sub.id)) per.set(tp.sub.id, []); per.get(tp.sub.id).push(tp); });
   for (const [sid, list] of per){ const m = list.length, anc = anchor(sid), r = m === 1 ? 0 : 230 + m * 28;
     list.forEach((tp, i) => { tp.dx = anc.x + Math.cos(i / m * TAU - Math.PI / 2) * r; tp.dy = anc.y + Math.sin(i / m * TAU - Math.PI / 2) * r; }); }
   const out = tops.map((tp, i) => { const e = stored[tp.key], pos = e ? new Map(e.notes.map((id, k) => [id, k])) : null;
     const notes = pos ? tp.notes.slice().sort((p, q) => (pos.has(p) ? pos.get(p) : 1e6) - (pos.has(q) ? pos.get(q) : 1e6)) : tp.notes.slice();
-    return {key:tp.key, x:e ? e.x : tp.dx, y:e ? e.y : tp.dy, R:TOPIC_R, rot:e ? e.rot : 0, notes:notes, chrono:tp.notes.slice(), act:act[i]}; });
-  const sig = hashStr(tops.map(tp => tp.key + ':' + tp.notes.join(',')).join('|') + '#' + links.map(L => linkKey(L.a, L.b)).sort().join(','));
+    const anc = anchor(tp.sub.id);
+    return {key:tp.key, x:e ? e.x : tp.dx, y:e ? e.y : tp.dy, R:TOPIC_R, rot:e ? e.rot : 0, notes:notes, chrono:tp.notes.slice(), act:act[i],
+            grp:tp.sub.id, ax:anc.x, ay:anc.y, lim:cosmos ? clusterR(tp.sub.id) - TOPIC_R : Infinity}; });
+  const sig = hashStr('v2;' + tops.map(tp => tp.key + ':' + tp.notes.join(',')).join('|') + '#' + links.map(L => linkKey(L.a, L.b)).sort().join(','));
   return {key:key, tops:out, links:links, sig:sig};
 }
 /// The search itself, a few milliseconds at a time. Calls done(best, startCost, bestCost) when it has finished.
 function annealModel(m, stale, done){
   const links = m.links, chrono = m.tops.map(t => t.chrono);
-  const base = m.tops.map(t => ({x:t.x, y:t.y, R:t.R, rot:t.rot, notes:t.notes.slice(), act:t.act}));
+  const base = m.tops.map(t => ({x:t.x, y:t.y, R:t.R, rot:t.rot, notes:t.notes.slice(), act:t.act, grp:t.grp, ax:t.ax, ay:t.ay, lim:t.lim}));
   const act = base.map((t, i) => i).filter(i => base[i].act);
-  const copy = st => st.map(t => ({x:t.x, y:t.y, R:t.R, rot:t.rot, notes:t.notes.slice(), act:t.act}));
+  const copy = st => st.map(t => ({x:t.x, y:t.y, R:t.R, rot:t.rot, notes:t.notes.slice(), act:t.act, grp:t.grp, ax:t.ax, ay:t.ay, lim:t.lim}));
   const where = new Map();
   const cost = st => {
     where.clear();
@@ -5943,10 +5948,13 @@ function annealModel(m, stale, done){
     st.forEach((t, ti) => t.notes.forEach((id, i) => { if (chrono[ti][i] !== id) c += 0.02; }));
     return c;
   };
-  const clear = (st, ti, x, y) => !st.some((o, oi) => oi !== ti && Math.hypot(o.x - x, o.y - y) < o.R + st[ti].R + 30);
-  const scramble = st => {
-    const ps = act.map(i => [st[i].x, st[i].y]); for (let i = ps.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [ps[i], ps[j]] = [ps[j], ps[i]]; }
-    act.forEach((ti, k) => { st[ti].x = ps[k][0]; st[ti].y = ps[k][1]; });
+  const clear = (st, ti, x, y) => Math.hypot(x - st[ti].ax, y - st[ti].ay) <= st[ti].lim && !st.some((o, oi) => oi !== ti && Math.hypot(o.x - x, o.y - y) < o.R + st[ti].R + 30);
+  const scramble = st => {                                   // topics trade places, but only with others of their own subject
+    const byGrp = new Map(); act.forEach(i => { const g = st[i].grp; if (!byGrp.has(g)) byGrp.set(g, []); byGrp.get(g).push(i); });
+    for (const idxs of byGrp.values()){
+      const ps = idxs.map(i => [st[i].x, st[i].y]); for (let i = ps.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [ps[i], ps[j]] = [ps[j], ps[i]]; }
+      idxs.forEach((ti, k) => { st[ti].x = ps[k][0]; st[ti].y = ps[k][1]; });
+    }
     for (const ti of act){ const t = st[ti]; if (t.notes.length > 1){ const k = Math.floor(Math.random() * t.notes.length); t.notes = t.notes.slice(k).concat(t.notes.slice(0, k)); } }
   };
   const startCost = cost(copy(base));
@@ -5963,7 +5971,7 @@ function annealModel(m, stale, done){
     while (performance.now() - t0 < 9 && restart < RESTARTS){
       const T = Math.max(0.05, T0 * (1 - it / ITER)), mv = Math.random(), ti = act[Math.floor(Math.random() * act.length)], t = st[ti];
       const before = copy(st); let moved = true;
-      if (mv < 0.25){ const oj = act[Math.floor(Math.random() * act.length)]; if (oj === ti) moved = false; else { const o = st[oj]; [t.x, o.x] = [o.x, t.x]; [t.y, o.y] = [o.y, t.y]; } }
+      if (mv < 0.25){ const oj = act[Math.floor(Math.random() * act.length)]; if (oj === ti || st[oj].grp !== t.grp) moved = false; else { const o = st[oj]; [t.x, o.x] = [o.x, t.x]; [t.y, o.y] = [o.y, t.y]; } }
       else if (mv < 0.45){ const a = Math.random() * TAU, r = 40 + Math.random() * 160, x = t.x + Math.cos(a) * r, y = t.y + Math.sin(a) * r; if (clear(st, ti, x, y)){ t.x = x; t.y = y; } else moved = false; }
       else if (mv < 0.75 && t.notes.length >= 2){ const i = Math.floor(Math.random() * t.notes.length), j = Math.floor(Math.random() * t.notes.length); if (i === j) moved = false; else [t.notes[i], t.notes[j]] = [t.notes[j], t.notes[i]]; }
       else if (t.notes.length >= 2){ const k = 1 + Math.floor(Math.random() * (t.notes.length - 1)); t.notes = t.notes.slice(k).concat(t.notes.slice(0, k)); t.rot += (Math.random() - 0.5) * (TAU / t.notes.length); }
@@ -9160,7 +9168,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b113';
+const BUILD = 'b114';
 // Home Screen mode on iPad: read the screen's vertical resolution and size the app to it,
 // instead of trusting the shorter area the page is told it has. Laid out in normal flow
 // (not fixed) so it is not clipped to that shorter area; the strip's colour carries on the app.
