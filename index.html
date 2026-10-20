@@ -5919,7 +5919,7 @@ function layoutModel(key){
     const anc = anchor(tp.sub.id);
     return {key:tp.key, x:e ? e.x : tp.dx, y:e ? e.y : tp.dy, R:roomOf[i], rot:e ? e.rot : 0, notes:notes, chrono:tp.notes.slice(), act:act[i],
             grp:tp.sub.id, ax:anc.x, ay:anc.y, lim:cosmos ? clusterR(tp.sub.id) - roomOf[i] : Infinity}; });
-  const sig = hashStr('v7;' + tops.map(tp => tp.key + ':' + tp.notes.join(',')).join('|') + '#' + links.map(L => linkKey(L.a, L.b)).sort().join(','));
+  const sig = hashStr('v8;' + tops.map(tp => tp.key + ':' + tp.notes.join(',')).join('|') + '#' + links.map(L => linkKey(L.a, L.b)).sort().join(','));
   const regions = {};
   if (cosmos && nS > 1) for (const sid of count.keys()){ const a = anchor(sid); regions[sid] = {x:Math.round(a.x), y:Math.round(a.y), r:Math.round(clusterR(sid))}; }
   return {key:key, tops:out, links:links, sig:sig, regions:regions};
@@ -5928,7 +5928,7 @@ function layoutModel(key){
 function annealModel(m, stale, done){
   const links = m.links, chrono = m.tops.map(t => t.chrono);
   const base = m.tops.map(t => ({x:t.x, y:t.y, R:t.R, rot:t.rot, notes:t.notes.slice(), act:t.act, grp:t.grp, ax:t.ax, ay:t.ay, lim:t.lim}));
-  const act = base.map((t, i) => i).filter(i => base[i].act);
+  const act = base.map((t, i) => i);          // every topic can be moved, linked or not
   const copy = st => st.map(t => ({x:t.x, y:t.y, R:t.R, rot:t.rot, notes:t.notes.slice(), act:t.act, grp:t.grp, ax:t.ax, ay:t.ay, lim:t.lim}));
   const where = new Map();
   const cost = st => {
@@ -5981,7 +5981,7 @@ function annealModel(m, stale, done){
         if (hit) c += 1;
       }
     }
-    st.forEach((t, ti) => t.notes.forEach((id, i) => { if (chrono[ti][i] !== id) c += 0.02; }));
+    st.forEach((t, ti) => { c += Math.hypot(t.x - t.ax, t.y - t.ay) * 0.012; t.notes.forEach((id, i) => { if (chrono[ti][i] !== id) c += 0.02; }); });   // and the pull to the middle
     return c;
   };
   const need = (a, b) => a.R + b.R + MIN_GAP;
@@ -6013,7 +6013,7 @@ function annealModel(m, stale, done){
   relax(base);
   const first = copy(base), startCost = cost(first);
   let best = first, bestCost = startCost;
-  if (act.length < 2 || links.length < 2){ done(best, startCost, bestCost); return; }
+  if (act.length < 2){ done(best, startCost, bestCost); return; }
   const RESTARTS = 8, ITER = 1400, T0 = 2.5;
   let restart = 0, it = 0, st = null, cur = 0;
   const begin = () => { st = copy(base); if (restart > 0) scramble(st); cur = cost(st); it = 0; };
@@ -6047,7 +6047,13 @@ function annealModel(m, stale, done){
 function storeLayout(key, m, best){
   const tops = {};
   m.tops.forEach((tp, i) => { tops[tp.key] = {x:Math.round(best[i].x), y:Math.round(best[i].y), rot:Math.round(best[i].rot * 1000) / 1000, notes:best[i].notes}; });
-  (S.layout || (S.layout = {}))[key] = {sig:m.sig, tops:tops, regions:m.regions, t:Date.now()};
+  const regions = {};
+  for (const sid in m.regions){
+    const rg = m.regions[sid]; let far = 0;
+    m.tops.forEach((tp, i) => { if (tp.grp === sid) far = Math.max(far, Math.hypot(best[i].x - rg.x, best[i].y - rg.y) + best[i].R); });
+    regions[sid] = {x:rg.x, y:rg.y, r:Math.max(Math.round(Math.min(rg.r, far + 70)), 160)};
+  }
+  (S.layout || (S.layout = {}))[key] = {sig:m.sig, tops:tops, regions:regions, t:Date.now()};
   save();
   if (br.running && br.layoutKey === key) applyStoredLayout(true);
 }
@@ -9244,7 +9250,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b118';
+const BUILD = 'b119';
 // Home Screen mode on iPad: read the screen's vertical resolution and size the app to it,
 // instead of trusting the shorter area the page is told it has. Laid out in normal flow
 // (not fixed) so it is not clipped to that shorter area; the strip's colour carries on the app.
