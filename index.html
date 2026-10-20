@@ -8918,21 +8918,31 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b98';
-// Home Screen mode on iPad leaves a strip under the page that the page cannot paint on.
-// What it can do is choose that strip's colour, so it carries on what sits just above it.
+const BUILD = 'b99';
+// Home Screen mode on iPad: read the screen's vertical resolution and size the app to it,
+// instead of trusting the shorter area the page is told it has. Laid out in normal flow
+// (not fixed) so it is not clipped to that shorter area; the strip's colour carries on the app.
 (function(){
   if (!navigator.standalone && !matchMedia('(display-mode: standalone)').matches) return;
   const app = document.getElementById('app'), root = document.documentElement;
   const sync = () => {
+    const land = innerWidth > innerHeight, sw = screen.width, sh = screen.height;
+    const full = land ? Math.min(sw, sh) : Math.max(sw, sh);
+    const h = Math.max(full, innerHeight);
+    app.style.position = 'absolute'; app.style.top = '0'; app.style.left = '0'; app.style.right = '0'; app.style.bottom = 'auto';
+    app.style.height = h + 'px';
+    root.style.height = h + 'px'; document.body.style.height = h + 'px'; document.body.style.overflow = 'hidden'; root.style.overflow = 'hidden';
     const night = app.classList.contains('world-night');
     const side = (!app.classList.contains('side-closed') && innerWidth > 860) ? 272 : 0;
     const main = night ? '#0B0B12' : '#1E1E1E', sb = '#2A2A2B';
     root.style.background = side ? 'linear-gradient(to right, ' + sb + ' ' + (side - 1) + 'px, #3C3C3C ' + (side - 1) + 'px, #3C3C3C ' + side + 'px, ' + main + ' ' + side + 'px)' : main;
-    document.body.style.background = 'transparent';
+    window.scrollTo(0, 0);
+    if (typeof edResize === 'function') try { edResize(); } catch (e) {}
+    if (typeof brResize === 'function') try { brResize(); } catch (e) {}
   };
   new MutationObserver(sync).observe(app, {attributes:true, attributeFilter:['class']});
-  addEventListener('resize', sync); sync();
+  addEventListener('resize', sync); addEventListener('orientationchange', () => setTimeout(sync, 250));
+  window.addEventListener('load', sync); sync();
 })();
 // TEMPORARY measurement box (tap it to hide) - tracks down the strip under the app on iPad
 try {
