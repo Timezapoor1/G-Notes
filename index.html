@@ -8918,22 +8918,29 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b92';
-// Home Screen mode on iPad leaves a strip under the page that the page cannot paint on.
-// What it can do is choose that strip's colour, so it carries on what sits just above it:
-// the sidebar's colour under the sidebar, the paper's (or the brain's) under the rest.
+const BUILD = 'b93';
+// Home Screen mode on iPad hands the page a view that is `gap` px shorter than the screen,
+// leaving a strip along the bottom that the page cannot size itself into. So the whole app
+// is moved down by that gap and the room it leaves at the top is filled with the top bar's
+// colour; the strip's own colour is chosen to carry on what sits just above it.
 (function(){
   if (!navigator.standalone && !matchMedia('(display-mode: standalone)').matches) return;
   const app = document.getElementById('app'), root = document.documentElement;
   const sync = () => {
+    const land = innerWidth > innerHeight, sw = screen.width, sh = screen.height;
+    const full = land ? Math.min(sw, sh) : Math.max(sw, sh);
+    let gap = full - innerHeight;
+    if (!(gap > 4 && gap < 80)) gap = 0;
+    app.style.top = gap + 'px'; app.style.bottom = (-gap) + 'px';
     const night = app.classList.contains('world-night');
     const side = (!app.classList.contains('side-closed') && innerWidth > 860) ? 272 : 0;
     const main = night ? '#0B0B12' : '#1E1E1E', sb = '#2A2A2B';
-    const bg = side ? 'linear-gradient(to right, ' + sb + ' ' + side + 'px, ' + main + ' ' + side + 'px)' : main;
-    root.style.background = bg; document.body.style.background = 'transparent';
+    const below = side ? 'linear-gradient(to right, ' + sb + ' ' + side + 'px, ' + main + ' ' + side + 'px)' : 'linear-gradient(' + main + ',' + main + ')';
+    root.style.background = 'linear-gradient(#252526,#252526) top / 100% ' + gap + 'px no-repeat, ' + below;
+    document.body.style.background = 'transparent';
   };
   new MutationObserver(sync).observe(app, {attributes:true, attributeFilter:['class']});
-  addEventListener('resize', sync); sync();
+  addEventListener('resize', sync); addEventListener('orientationchange', () => setTimeout(sync, 250)); sync();
 })();
 // installable and offline: only where there is a real address to register against
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !window.claude){
