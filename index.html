@@ -328,9 +328,9 @@ section[hidden]{display:none !important}
 .tb-sep{width:1px; height:24px; background:var(--line); margin:0 5px}
 /* the span holding the dots is a flex item; without this its grid children
    stack vertically and break out of the toolbar */
-#colorDots{display:flex; align-items:center; gap:2px}
-.cdot{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;margin:0 1px}
-.cdot i{display:block;width:18px;height:18px;border-radius:50%;background:var(--c);border:1px solid rgba(255,255,255,.25)}
+#colorDots{display:flex; flex-direction:column; align-items:center; gap:0}
+.cdot{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;margin:0}
+.cdot i{display:block;width:15px;height:15px;border-radius:50%;background:var(--c);border:1px solid rgba(255,255,255,.25)}
 .cdot.on{box-shadow:inset 0 0 0 2px var(--accent)}
 .sdot{width:30px;height:34px;border-radius:8px;display:grid;place-items:center;color:var(--muted)}
 .sdot i{display:block;border-radius:50%;background:currentColor}
@@ -8919,7 +8919,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b101';
+const BUILD = 'b102';
 // Home Screen mode on iPad: read the screen's vertical resolution and size the app to it,
 // instead of trusting the shorter area the page is told it has. Laid out in normal flow
 // (not fixed) so it is not clipped to that shorter area; the strip's colour carries on the app.
