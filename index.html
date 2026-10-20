@@ -5713,6 +5713,7 @@ function buildGraph(){
   const subjects = UI.mode === 'cosmos' ? S.subjects : S.subjects.filter(s => s.id === UI.subjectId);
   const sids = new Set(subjects.map(s => s.id));
   br.nodes = []; br.links = []; br.segs = new Map(); br.pulses = [];
+  br.optToken = (br.optToken || 0) + 1; br.untangling = false;
   for (const sub of subjects){
     const anchor = clusterAnchor(sub.id);
     const groups = new Map();
@@ -5787,7 +5788,7 @@ function renderBrainTitle(){
   if (!s){ el.innerHTML = '<div class="bt1">No subject selected</div>'; return; }
   const nt = topicsOf(s.id).length, nn = brainNotes(s.id).length;
   el.innerHTML = `<div class="bt1"><span class="dot" style="--c:${hueColor(s.hue)}"></span>${esc(s.name)}</div>
-    <div class="bt2">${nt} topic${nt===1?'':'s'} &middot; ${nn} note${nn===1?'':'s'} &middot; ${br.links.length} link${br.links.length===1?'':'s'}</div>`;
+    <div class="bt2">${nt} topic${nt===1?'':'s'} &middot; ${nn} note${nn===1?'':'s'} &middot; ${br.links.length} link${br.links.length===1?'':'s'}${br.untangling ? ' &middot; untangling&hellip;' : ''}</div>`;
 }
 
 /* ---------- where a note's segment is, and how its links run ---------- */
@@ -5892,6 +5893,107 @@ function annealBoard(ms){
     else restore(undo);
   }
   restore(bestSt);
+}
+/* ---------- untangling in the background ----------
+   The search runs on a private copy of the board, a few milliseconds at a time between frames,
+   so nothing moves while it works. It starts over from several scrambled layouts as well as the
+   current one, and only the arrangement with the fewest crossings is ever shown: the topics
+   glide to their new places and the notes swing round their rings. */
+function startUntangle(){
+  const token = br.optToken = (br.optToken || 0) + 1;
+  const live = br.nodes.filter(n => n.kind === 'topic');
+  if (br.links.length < 2) return;
+  const pulls = new Map(live.map(nd => [nd, ringPulls(nd).size > 0]));
+  if (live.filter(nd => pulls.get(nd)).length < 2) return;
+  const links = br.links.map(L => ({a:L.a, b:L.b}));
+  const base = live.map(nd => ({x:nd.x, y:nd.y, R:nd.R, rot:nd.rot || 0, notes:nd.notes.map(n => n.id), act:pulls.get(nd)}));
+  const chrono = live.map(nd => (nd.chrono || nd.notes).map(n => n.id));
+  const act = base.map((t, i) => i).filter(i => base[i].act);
+  const copy = st => st.map(t => ({x:t.x, y:t.y, R:t.R, rot:t.rot, notes:t.notes.slice(), act:t.act}));
+  const where = new Map();
+  const cost = st => {
+    where.clear();
+    st.forEach((t, ti) => t.notes.forEach((id, i) => where.set(id, {ti:ti, i:i, n:t.notes.length})));
+    const pt = w => { const t = st[w.ti], a = -Math.PI / 2 + (w.i + 0.5) * TAU / w.n + t.rot;
+      return [t.x + Math.cos(a) * (RING_OUT + 5), t.y + Math.sin(a) * (RING_OUT + 5), a]; };
+    const ls = [];
+    for (const L of links){
+      const wa = where.get(L.a), wb = where.get(L.b); if (!wa || !wb) continue;
+      const A = pt(wa), B = pt(wb), d = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1, k = Math.max(46, d * 0.4);
+      const P1x = A[0] + Math.cos(A[2]) * k, P1y = A[1] + Math.sin(A[2]) * k, P2x = B[0] + Math.cos(B[2]) * k, P2y = B[1] + Math.sin(B[2]) * k;
+      const xs = [], ys = [];
+      for (let i = 0; i <= 8; i++){ const t = i / 8, u = 1 - t;
+        xs.push(u*u*u*A[0] + 3*u*u*t*P1x + 3*u*t*t*P2x + t*t*t*B[0]); ys.push(u*u*u*A[1] + 3*u*u*t*P1y + 3*u*t*t*P2y + t*t*t*B[1]); }
+      let hits = 0;
+      for (let ti = 0; ti < st.length; ti++){ if (ti === wa.ti || ti === wb.ti) continue;
+        for (let i = 1; i < 8; i++) if (Math.hypot(xs[i] - st[ti].x, ys[i] - st[ti].y) < RING_OUT + 12){ hits++; break; } }
+      ls.push({xs:xs, ys:ys, a:L.a, b:L.b, hits:hits, len:d});
+    }
+    let c = 0;
+    for (let i = 0; i < ls.length; i++){
+      c += ls[i].hits * 0.6 + ls[i].len * 0.00005;
+      for (let j = i + 1; j < ls.length; j++){
+        const p = ls[i], q = ls[j];
+        if (p.a === q.a || p.a === q.b || p.b === q.a || p.b === q.b) continue;
+        let hit = false;
+        for (let x = 0; x < 8 && !hit; x++) for (let y = 0; y < 8; y++)
+          if (segsCross([p.xs[x], p.ys[x]], [p.xs[x + 1], p.ys[x + 1]], [q.xs[y], q.ys[y]], [q.xs[y + 1], q.ys[y + 1]])){ hit = true; break; }
+        if (hit) c++;
+      }
+    }
+    st.forEach((t, ti) => t.notes.forEach((id, i) => { if (chrono[ti][i] !== id) c += 0.02; }));
+    return c;
+  };
+  const clear = (st, ti, x, y) => !st.some((o, oi) => oi !== ti && Math.hypot(o.x - x, o.y - y) < o.R + st[ti].R + 30);
+  const scramble = st => {                                   // a different starting layout: the topics trade places at random
+    const ps = act.map(i => [st[i].x, st[i].y]); for (let i = ps.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [ps[i], ps[j]] = [ps[j], ps[i]]; }
+    act.forEach((ti, k) => { st[ti].x = ps[k][0]; st[ti].y = ps[k][1]; });
+    for (const ti of act){ const t = st[ti]; if (t.notes.length > 1){ const k = Math.floor(Math.random() * t.notes.length); t.notes = t.notes.slice(k).concat(t.notes.slice(0, k)); } }
+  };
+  const RESTARTS = 8, ITER = 1400;
+  let restart = 0, it = 0, st = null, cur = 0, T0 = 2.5;
+  const startCost = cost(copy(base));
+  let best = copy(base), bestCost = startCost;
+  br.untangling = true; renderBrainTitle();
+  const begin = () => { st = copy(base); if (restart > 0) scramble(st); cur = cost(st); it = 0; };
+  begin();
+  const slice = () => {
+    if (token !== br.optToken) return;                      // the board changed: this search is stale
+    const t0 = performance.now();
+    while (performance.now() - t0 < 9 && restart < RESTARTS){
+      const T = Math.max(0.05, T0 * (1 - it / ITER)), mv = Math.random(), ti = act[Math.floor(Math.random() * act.length)], t = st[ti];
+      const before = copy(st); let moved = true;
+      if (mv < 0.25){ const oj = act[Math.floor(Math.random() * act.length)]; if (oj === ti) moved = false; else { const o = st[oj]; [t.x, o.x] = [o.x, t.x]; [t.y, o.y] = [o.y, t.y]; } }
+      else if (mv < 0.45){ const a = Math.random() * TAU, r = 40 + Math.random() * 160, x = t.x + Math.cos(a) * r, y = t.y + Math.sin(a) * r; if (clear(st, ti, x, y)){ t.x = x; t.y = y; } else moved = false; }
+      else if (mv < 0.75 && t.notes.length >= 2){ const i = Math.floor(Math.random() * t.notes.length), j = Math.floor(Math.random() * t.notes.length); if (i === j) moved = false; else [t.notes[i], t.notes[j]] = [t.notes[j], t.notes[i]]; }
+      else if (t.notes.length >= 2){ const k = 1 + Math.floor(Math.random() * (t.notes.length - 1)); t.notes = t.notes.slice(k).concat(t.notes.slice(0, k)); t.rot += (Math.random() - 0.5) * (TAU / t.notes.length); }
+      else moved = false;
+      it++;
+      if (moved){
+        const c = cost(st);
+        if (c <= cur || Math.random() < Math.exp((cur - c) / T)){ cur = c; if (c < bestCost - 1e-9){ bestCost = c; best = copy(st); } }
+        else st = before;
+      }
+      if (it >= ITER){ restart++; if (restart < RESTARTS) begin(); }
+    }
+    if (restart < RESTARTS) setTimeout(slice, 0); else finish();
+  };
+  const finish = () => {
+    if (token !== br.optToken) return;
+    br.untangling = false; renderBrainTitle();
+    if (bestCost >= startCost - 0.4) return;                // nothing better than what is already on show
+    live.forEach((nd, i) => {
+      const b = best[i]; if (!b.act) return;
+      nd.chrono = nd.chrono || nd.notes.slice();
+      const byId = new Map(nd.notes.map(n => [n.id, n]));
+      nd.notes = b.notes.map(id => byId.get(id)).filter(Boolean);
+      nd.notes.forEach((note, k) => { const sg = br.segs.get(note.id); if (sg) sg.i = k; });
+      nd.rotGoal = b.rot; nd.gx = b.x; nd.gy = b.y;
+    });
+    br.alpha = Math.min(br.alpha, 0.01);
+    toast('Untangled: ' + Math.round(startCost) + ' → ' + Math.round(bestCost) + ' crossings');
+  };
+  setTimeout(slice, 30);
 }
 /// Turn each ring - and where needed swap neighbouring notes - to whatever leaves the fewest links crossing.
 function arrangeRings(){
@@ -6179,10 +6281,11 @@ function brainFrame(ts){
     }
     br.alpha *= 0.985;
     if (br.alpha > 0.05) br.arranged = false;
-    else if (!br.arranged){ br.arranged = true; arrangeRings(); }
+    else if (!br.arranged){ br.arranged = true; startUntangle(); }
   }
   pivotRings();
   for (const n of N){
+    if (n.gx !== undefined){ n.x += (n.gx - n.x) * 0.1; n.y += (n.gy - n.y) * 0.1; if (Math.hypot(n.gx - n.x, n.gy - n.y) < 0.5){ n.x = n.gx; n.y = n.gy; n.gx = undefined; n.gy = undefined; fitCamera(); } }
     if (n.kind === 'topic'){ if (n.t){ n.t.x = n.x; n.t.y = n.y; } else { n.sub.ux = n.x; n.sub.uy = n.y; } }
     else { n.m.x = n.x; n.m.y = n.y; }
   }
@@ -9084,7 +9187,7 @@ $('#home').addEventListener('click', e => {
 /* =========================================================
    STATUS BAR
    ========================================================= */
-const BUILD = 'b111';
+const BUILD = 'b112';
 // Home Screen mode on iPad: read the screen's vertical resolution and size the app to it,
 // instead of trusting the shorter area the page is told it has. Laid out in normal flow
 // (not fixed) so it is not clipped to that shorter area; the strip's colour carries on the app.
