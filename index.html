@@ -1437,9 +1437,9 @@ function idbSet(key, val){
       const tx = IDB.db.transaction('kv', 'readwrite');
       tx.objectStore('kv').put(val, key);
       tx.oncomplete = () => resolve(true);
-      tx.onerror = () => resolve(false);
-      tx.onabort = () => resolve(false);
-    } catch(e){ resolve(false); }
+      tx.onerror = () => { IDB.err = (tx.error && tx.error.name) || 'error'; resolve(false); };
+      tx.onabort = () => { IDB.err = (tx.error && tx.error.name) || 'abort'; resolve(false); };
+    } catch(e){ IDB.err = e && e.name || 'error'; resolve(false); }
   });
 }
 function idbGet(key){
@@ -1471,6 +1471,7 @@ try {
 /// Open IndexedDB and adopt whichever copy is newer. Called before the UI is
 /// built so the notebook is whole by the time anything renders.
 async function initStorage(){
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch(e){}   // ask iOS not to evict or cap us
   IDB.db = await idbOpen();
   IDB.ok = !!IDB.db;
   if (!IDB.ok) return;
@@ -1498,8 +1499,14 @@ function save(){
     const t0 = performance.now();
     S.savedAt = Date.now();
     let wrote = false;
+    if (!IDB.db){ IDB.db = await idbOpen(); IDB.ok = !!IDB.db; }   // the first open can time out on a slow start; try again
     if (IDB.ok){
       wrote = await idbSet(STORE_KEY, S);
+      if (!wrote){                                  // the connection can go stale once iOS suspends the app
+        try { IDB.db.close(); } catch(e){}
+        IDB.db = await idbOpen(); IDB.ok = !!IDB.db;
+        if (IDB.ok) wrote = await idbSet(STORE_KEY, S);
+      }
       if (wrote) storageKind = 'IndexedDB';
     }
     if (!wrote){
@@ -1508,7 +1515,11 @@ function save(){
         localStorage.setItem(STORE_KEY, packNotebook(S));
         wrote = true; storageKind = 'localStorage';
       } catch(e){
-        if (storageOk) toast('Storage full — export a backup now');
+        if (storageOk){
+          let why = IDB.err || (IDB.ok ? '' : 'no IndexedDB');
+          try { const e = await navigator.storage.estimate(); why += ' ' + Math.round(e.usage/1048576) + 'MB of ' + Math.round(e.quota/1048576) + 'MB'; } catch(_){}
+          toast('Could not save (' + why.trim() + ') — export a backup now');
+        }
       }
     }
     storageOk = wrote;
