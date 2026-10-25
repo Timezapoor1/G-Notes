@@ -5264,63 +5264,70 @@ function blockText(ctx, x, y, txt, size){
   ctx.fillText(txt, 0, 0);
   ctx.restore();
 }
+/// A pin lead that steps in from a corner: along x to bx, across to y, on to x2.
+function elbow(ctx,x,y0,bx,y,x2){
+  ctx.beginPath(); ctx.moveTo(x,y0); ctx.lineTo(bx,y0); ctx.lineTo(bx,y); ctx.lineTo(x2,y); ctx.stroke();
+}
 const BLOCKS = {
-  opamp: {name:'Op-amp', pins:'2 in · 1 out', size:[2,1],
+  /* Every pin ends exactly on a lattice node: x = 0 or W, y = 0, H/2 or H of a
+     footprint measured in whole cells. A lead that has to reach a corner pin
+     takes a short elbow into the body. */
+  opamp: {name:'Op-amp', pins:'2 in · 1 out', size:[2,2],
     draw(ctx,W,H){
-      const inset=W*0.18;
-      ctx.beginPath(); ctx.moveTo(inset,0); ctx.lineTo(inset,H); ctx.lineTo(W-inset,H/2); ctx.closePath(); ctx.stroke();
-      ln(ctx,0,H*0.3,inset,H*0.3); ln(ctx,0,H*0.7,inset,H*0.7); ln(ctx,W-inset,H/2,W,H/2);
-      blockText(ctx, inset+W*0.10, H*0.3, '−', Math.max(10,H*0.18));
-      blockText(ctx, inset+W*0.10, H*0.7, '+',       Math.max(10,H*0.18));
+      const inset=W*0.18, bx=inset*0.5, ya=H*0.2, yb=H*0.8;
+      ctx.beginPath(); ctx.moveTo(inset,H*0.05); ctx.lineTo(inset,H*0.95); ctx.lineTo(W-inset,H/2); ctx.closePath(); ctx.stroke();
+      elbow(ctx,0,0,bx,ya,inset); elbow(ctx,0,H,bx,yb,inset); ln(ctx,W-inset,H/2,W,H/2);
+      blockText(ctx, inset+W*0.10, ya, '−', Math.max(10,H*0.12));
+      blockText(ctx, inset+W*0.10, yb, '+', Math.max(10,H*0.12));
     }},
   npn: {name:'NPN transistor', pins:'base · collector · emitter', size:[1,2],
     draw(ctx,W,H){
-      const cx=W*0.55, cy=H/2, r=Math.min(W,H)*0.34;
+      const cx=W*0.5, cy=H/2, r=Math.min(W,H)*0.34, ex=cx+r*0.55;
       ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke();
       ln(ctx,0,cy,cx-r*0.45,cy);
       ln(ctx,cx-r*0.45,cy-r*0.6,cx-r*0.45,cy+r*0.6);
-      ln(ctx,cx-r*0.45,cy-r*0.25,cx+r*0.55,cy-r*0.72);
-      ln(ctx,cx-r*0.45,cy+r*0.25,cx+r*0.55,cy+r*0.72);
-      ln(ctx,cx+r*0.55,cy-r*0.72,cx+r*0.55,0);
-      ln(ctx,cx+r*0.55,cy+r*0.72,cx+r*0.55,H);
-      ctx.beginPath(); ctx.moveTo(cx+r*0.55,cy+r*0.72); ctx.lineTo(cx+r*0.18,cy+r*0.44);
+      ln(ctx,cx-r*0.45,cy-r*0.25,ex,cy-r*0.72);
+      ln(ctx,cx-r*0.45,cy+r*0.25,ex,cy+r*0.72);
+      ln(ctx,ex,cy-r*0.72,ex,0); ln(ctx,ex,0,W,0);
+      ln(ctx,ex,cy+r*0.72,ex,H); ln(ctx,ex,H,W,H);
+      ctx.beginPath(); ctx.moveTo(ex,cy+r*0.72); ctx.lineTo(cx+r*0.18,cy+r*0.44);
       ctx.lineTo(cx+r*0.24,cy+r*0.82); ctx.closePath(); ctx.fill();
     }},
   pnp: {name:'PNP transistor', pins:'base · collector · emitter', size:[1,2],
     draw(ctx,W,H){
-      const cx=W*0.55, cy=H/2, r=Math.min(W,H)*0.34;
+      const cx=W*0.5, cy=H/2, r=Math.min(W,H)*0.34, ex=cx+r*0.55;
       ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke();
       ln(ctx,0,cy,cx-r*0.45,cy);
       ln(ctx,cx-r*0.45,cy-r*0.6,cx-r*0.45,cy+r*0.6);
-      ln(ctx,cx-r*0.45,cy-r*0.25,cx+r*0.55,cy-r*0.72);
-      ln(ctx,cx-r*0.45,cy+r*0.25,cx+r*0.55,cy+r*0.72);
-      ln(ctx,cx+r*0.55,cy-r*0.72,cx+r*0.55,0);
-      ln(ctx,cx+r*0.55,cy+r*0.72,cx+r*0.55,H);
+      ln(ctx,cx-r*0.45,cy-r*0.25,ex,cy-r*0.72);
+      ln(ctx,cx-r*0.45,cy+r*0.25,ex,cy+r*0.72);
+      ln(ctx,ex,cy-r*0.72,ex,0); ln(ctx,ex,0,W,0);
+      ln(ctx,ex,cy+r*0.72,ex,H); ln(ctx,ex,H,W,H);
       ctx.beginPath(); ctx.moveTo(cx-r*0.45,cy+r*0.25); ctx.lineTo(cx-r*0.10,cy+r*0.55);
       ctx.lineTo(cx-r*0.05,cy+r*0.17); ctx.closePath(); ctx.fill();
     }},
-  and: {name:'AND gate', pins:'2 in · 1 out', size:[2,1],
+  and: {name:'AND gate', pins:'2 in · 1 out', size:[2,2],
     draw(ctx,W,H){
-      const x0=W*0.2, x1=W*0.8;
-      ctx.beginPath(); ctx.moveTo(x0,0); ctx.lineTo((x0+x1)/2,0);
-      ctx.arc((x0+x1)/2,H/2,H/2,-Math.PI/2,Math.PI/2); ctx.lineTo(x0,H); ctx.closePath(); ctx.stroke();
-      ln(ctx,0,H*0.3,x0,H*0.3); ln(ctx,0,H*0.7,x0,H*0.7); ln(ctx,x1,H/2,W,H/2);
+      const x0=W*0.2, x1=W*0.8, t=H*0.1, b=H*0.9, r=(b-t)/2, m=x1-r, bx=x0*0.5;
+      ctx.beginPath(); ctx.moveTo(x0,t); ctx.lineTo(m,t);
+      ctx.arc(m,H/2,r,-Math.PI/2,Math.PI/2); ctx.lineTo(x0,b); ctx.closePath(); ctx.stroke();
+      elbow(ctx,0,0,bx,H*0.3,x0); elbow(ctx,0,H,bx,H*0.7,x0); ln(ctx,x1,H/2,W,H/2);
     }},
-  or: {name:'OR gate', pins:'2 in · 1 out', size:[2,1],
+  or: {name:'OR gate', pins:'2 in · 1 out', size:[2,2],
     draw(ctx,W,H){
-      const x0=W*0.2, x1=W*0.82;
+      const x0=W*0.2, x1=W*0.82, t=H*0.1, b=H*0.9, bx=x0*0.5, lx=x0+W*0.08;
       ctx.beginPath();
-      ctx.moveTo(x0,0);
-      ctx.quadraticCurveTo(x0+W*0.28,H/2,x0,H);
-      ctx.quadraticCurveTo(W*0.62,H*0.96,x1,H/2);
-      ctx.quadraticCurveTo(W*0.62,H*0.04,x0,0);
+      ctx.moveTo(x0,t);
+      ctx.quadraticCurveTo(x0+W*0.28,H/2,x0,b);
+      ctx.quadraticCurveTo(W*0.62,H*0.868,x1,H/2);
+      ctx.quadraticCurveTo(W*0.62,H*0.132,x0,t);
       ctx.stroke();
-      ln(ctx,0,H*0.3,x0+W*0.08,H*0.3); ln(ctx,0,H*0.7,x0+W*0.08,H*0.7); ln(ctx,x1,H/2,W,H/2);
+      elbow(ctx,0,0,bx,H*0.3,lx); elbow(ctx,0,H,bx,H*0.7,lx); ln(ctx,x1,H/2,W,H/2);
     }},
-  not: {name:'NOT gate', pins:'1 in · 1 out', size:[1,1],
+  not: {name:'NOT gate', pins:'1 in · 1 out', size:[2,2],
     draw(ctx,W,H){
-      const x0=W*0.2, x1=W*0.72, r=W*0.07;
-      ctx.beginPath(); ctx.moveTo(x0,0); ctx.lineTo(x0,H); ctx.lineTo(x1,H/2); ctx.closePath(); ctx.stroke();
+      const x0=W*0.2, x1=W*0.72, r=W*0.05;
+      ctx.beginPath(); ctx.moveTo(x0,H*0.25); ctx.lineTo(x0,H*0.75); ctx.lineTo(x1,H/2); ctx.closePath(); ctx.stroke();
       ctx.beginPath(); ctx.arc(x1+r,H/2,r,0,Math.PI*2); ctx.stroke();
       ln(ctx,0,H/2,x0,H/2); ln(ctx,x1+2*r,H/2,W,H/2);
     }},
