@@ -3931,7 +3931,7 @@ async function linkMenu(l){
    Draw a loop round writing to select it (a stroke is taken when half of it is
    inside the loop). Drag the selection to move it - one undo step - or Copy /
    Cut it, Paste it on any page, or send a copy to the end of a topic's formula
-   sheet. Strokes only: circuits, links and a question's printed crop stay put.
+   sheet. Circuit parts come with it, moving a cell at a time; links and a question's printed crop stay put.
    A selection is held as the stroke objects themselves; moving swaps in new
    objects (never edits one in place), which is what lets undo put the old ones
    straight back. The clipboard lives for the session and crosses pages.
@@ -3955,6 +3955,37 @@ function strokesBox(list){
   }
   return list.length ? {x0:x0, y0:y0, x1:x1, y1:y1, w:x1 - x0, h:y1 - y0} : null;
 }
+/// The lasso takes circuit parts too. A selection is {strokes, segs, blocks, box}
+/// - the circuit parts are the page's own objects, and they only ever move by
+/// whole lattice cells so every pin stays on a dot.
+const selCount = s => s.strokes.length + s.segs.length + s.blocks.length;
+function selBox(strokes, segs, blocks){
+  const b = strokesBox(strokes);
+  let x0 = b ? b.x0 : 1e9, y0 = b ? b.y0 : 1e9, x1 = b ? b.x1 : -1e9, y1 = b ? b.y1 : -1e9;
+  const take = (x, y) => { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; };
+  const pad = 12;
+  for (const sg of segs){
+    for (const e of [sg.a, sg.b]){ const q = gridPos(e, sg.g || 0); take(q[0] - pad, q[1] - pad); take(q[0] + pad, q[1] + pad); }
+  }
+  for (const bl of blocks){
+    const q = gridPos([bl.gx, bl.gy], bl.g || 0);
+    take(q[0] - 4, q[1] - 4); take(q[0] + bl.gw * CIRC.G + 4, q[1] + bl.gh * CIRC.G + 4);
+  }
+  return (x1 < x0) ? null : {x0:x0, y0:y0, x1:x1, y1:y1, w:x1 - x0, h:y1 - y0};
+}
+/// How many lattice cells a set of circuit parts can move before one leaves it.
+function circRange(items){
+  let loX = -1e9, hiX = 1e9, loY = -1e9, hiY = 1e9;
+  for (const it of items){
+    loX = Math.max(loX, -it.x); hiX = Math.min(hiX, gridCols(it.g) - it.w - it.x);
+    loY = Math.max(loY, -it.y); hiY = Math.min(hiY, gridRows() - it.h - it.y);
+  }
+  return {loX, hiX, loY, hiY};
+}
+const circItems = (segs, blocks) => [].concat(
+  segs.map(sg => ({g:sg.g || 0, x:Math.min(sg.a[0], sg.b[0]), y:Math.min(sg.a[1], sg.b[1]),
+                   w:Math.abs(sg.a[0] - sg.b[0]), h:Math.abs(sg.a[1] - sg.b[1])})),
+  blocks.map(bl => ({g:bl.g || 0, x:bl.gx, y:bl.gy, w:bl.gw, h:bl.gh})));
 const shiftStroke = (st, dx, dy) => Object.assign({}, st, {pts: st.pts.map(q => [round1(q[0] + dx), round1(q[1] + dy), q[2]])});
 function clearSel(){
   if (!ed.sel && !ed.lasso){ renderLassoBar(); return; }
@@ -3964,7 +3995,8 @@ function clearSel(){
 function lassoBegin(pt){
   const s = ed.sel, pad = 12;
   if (s && s.box && pt.x >= s.box.x0 - pad && pt.x <= s.box.x1 + pad && pt.y >= s.box.y0 - pad && pt.y <= s.box.y1 + pad){
-    ed.lasso = {mode:'move', x0:pt.x, y0:pt.y, starts:s.strokes.slice(), moved:false};
+    ed.lasso = {mode:'move', x0:pt.x, y0:pt.y, starts:s.strokes.slice(), moved:false,
+      sa:s.segs.map(sg => [sg.a.slice(), sg.b.slice()]), sb:s.blocks.map(bl => [bl.gx, bl.gy])};
   } else {
     ed.sel = null;
     ed.lasso = {mode:'draw', pts:[[pt.x, pt.y]]};
@@ -3984,14 +4016,26 @@ function lassoMove(e){
     if (Math.hypot(dx, dy) * ed.view.sc < 5) return;
     L.moved = true; pushUndo();
   }
-  const pg = currentPage(), cur = ed.sel.strokes;
+  const pg = currentPage(), cur = ed.sel.strokes, G = CIRC.G;
+  let mx = dx, my = dy;
+  const sel = ed.sel;
+  if (sel.segs.length || sel.blocks.length){
+    // with circuit parts in the loop the whole selection moves a cell at a time
+    const rg = circRange(circItems(
+      sel.segs.map((sg, i) => ({g:sg.g, a:L.sa[i][0], b:L.sa[i][1]})),
+      sel.blocks.map((bl, i) => ({g:bl.g, gx:L.sb[i][0], gy:L.sb[i][1], gw:bl.gw, gh:bl.gh}))));
+    const cx = clamp(Math.round(dx / G), rg.loX, rg.hiX), cy = clamp(Math.round(dy / G), rg.loY, rg.hiY);
+    sel.segs.forEach((sg, i) => { sg.a = [L.sa[i][0][0] + cx, L.sa[i][0][1] + cy]; sg.b = [L.sa[i][1][0] + cx, L.sa[i][1][1] + cy]; });
+    sel.blocks.forEach((bl, i) => { bl.gx = L.sb[i][0] + cx; bl.gy = L.sb[i][1] + cy; });
+    mx = cx * G; my = cy * G;
+  }
   for (let i = 0; i < cur.length; i++){
     const k = pg.strokes.indexOf(cur[i]);
-    const ns = shiftStroke(L.starts[i], dx, dy);
+    const ns = shiftStroke(L.starts[i], mx, my);
     if (k >= 0) pg.strokes[k] = ns;
     cur[i] = ns;
   }
-  ed.sel.box = strokesBox(cur);
+  ed.sel.box = selBox(cur, sel.segs, sel.blocks);
   invalidateBase(); paintSoon();
 }
 function lassoEnd(){
@@ -3999,7 +4043,7 @@ function lassoEnd(){
   ed.strokeId = null; ed.strokeOwner = null; ed.activeTool = null;
   if (!L) return;
   if (L.mode === 'move'){
-    if (L.moved){ ed.sel.box = strokesBox(ed.sel.strokes); saveNote(); }
+    if (L.moved){ ed.sel.box = selBox(ed.sel.strokes, ed.sel.segs, ed.sel.blocks); saveNote(); }
   } else {
     const pg = currentPage(), poly = L.pts;
     let picked = [];
@@ -4013,9 +4057,20 @@ function lassoEnd(){
           return n / st.pts.length >= 0.5;
         });
       }
-      if (!picked.length) toast('Nothing inside that loop');
+      // a wire is taken when most of its length is inside, a part when its middle is
+      const c = (bb.w > 14 && bb.h > 14) ? pg.circuit : null;
+      const segs = c ? c.segs.filter(sg => {
+        const a = gridPos(sg.a, sg.g || 0), b = gridPos(sg.b, sg.g || 0);
+        return [a, b, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]].filter(q => pointInPoly(q[0], q[1], poly)).length >= 2;
+      }) : [];
+      const blocks = c ? c.blocks.filter(bl => {
+        const q = gridPos([bl.gx, bl.gy], bl.g || 0);
+        return pointInPoly(q[0] + bl.gw * CIRC.G / 2, q[1] + bl.gh * CIRC.G / 2, poly);
+      }) : [];
+      if (!picked.length && !segs.length && !blocks.length) toast('Nothing inside that loop');
+      else ed.sel = {strokes:picked, segs:segs, blocks:blocks, box:selBox(picked, segs, blocks)};
     }
-    ed.sel = picked.length ? {strokes:picked, box:strokesBox(picked)} : null;
+    if (pg && poly.length < 6) ed.sel = null;
   }
   renderLassoBar(); invalidateBase();
 }
@@ -4046,10 +4101,11 @@ function renderLassoBar(){
   el.hidden = false;
   const s = ed.sel, c = UI.clip;
   el.innerHTML = (s
-    ? '<span class="la-n">' + s.strokes.length + ' selected</span>' +
+    ? '<span class="la-n">' + selCount(s) + ' selected</span>' +
       '<button data-la="copy">Copy</button><button data-la="cut">Cut</button>' +
-      '<button data-la="del" class="danger">Delete</button><button data-la="sheet">To formula sheet</button>'
-    : '<span class="la-n">Draw a loop around writing to select it</span>') +
+      '<button data-la="del" class="danger">Delete</button>' +
+      (s.strokes.length ? '<button data-la="sheet">To formula sheet</button>' : '')
+    : '<span class="la-n">Draw a loop around writing or a circuit to select it</span>') +
     (c ? '<button data-la="paste">Paste</button>' : '');
   el.querySelectorAll('[data-la]').forEach(b => b.onclick = () => lassoAct(b.dataset.la));
   positionLassoBar();
@@ -4075,14 +4131,21 @@ async function lassoAct(act){
   if (act === 'paste'){ lassoPaste(); return; }
   if (!s) return;
   if (act === 'copy' || act === 'cut'){
-    UI.clip = {strokes: s.strokes.map(st => { const c = shiftStroke(st, 0, 0); delete c.card; return c; }), box: Object.assign({}, s.box)};
-    toast((act === 'cut' ? 'Cut ' : 'Copied ') + s.strokes.length + ' stroke' + (s.strokes.length === 1 ? '' : 's'));
+    UI.clip = {strokes: s.strokes.map(st => { const c = shiftStroke(st, 0, 0); delete c.card; return c; }), box: Object.assign({}, s.box),
+               segs: JSON.parse(JSON.stringify(s.segs)), blocks: JSON.parse(JSON.stringify(s.blocks))};
+    const cnt = selCount(s);
+    toast((act === 'cut' ? 'Cut ' : 'Copied ') + cnt + (cnt === 1 ? ' item' : ' items'));
     if (act === 'copy'){ renderLassoBar(); return; }
   }
   if (act === 'del' || act === 'cut'){
     pushUndo();
     const gone = new Set(s.strokes);
     pg.strokes = pg.strokes.filter(x => !gone.has(x));
+    if (pg.circuit){
+      const gs = new Set(s.segs), gb = new Set(s.blocks);
+      pg.circuit.segs = pg.circuit.segs.filter(x => !gs.has(x));
+      pg.circuit.blocks = pg.circuit.blocks.filter(x => !gb.has(x));
+    }
     sheetTidy(pg);
     ed.sel = null;
     saveNote(); invalidateBase(); schedulePaint(); renderLassoBar();
@@ -4096,12 +4159,26 @@ function lassoPaste(){
   if (pageMethod()){ toast('Paste onto a ruled page, not a method card'); return; }
   const v = ed.view;
   const cx = (ed.cw / 2 - v.ox) / v.sc, cy = (ed.ch / 2 - v.oy) / v.sc;
-  const x = clamp(cx - c.box.w / 2, 10, Math.max(10, PAGE_W - 10 - c.box.w));
-  const y = Math.max(10, cy - c.box.h / 2);
+  let x = clamp(cx - c.box.w / 2, 10, Math.max(10, PAGE_W - 10 - c.box.w));
+  let y = Math.max(10, cy - c.box.h / 2);
+  const csegs = JSON.parse(JSON.stringify(c.segs || [])), cblocks = JSON.parse(JSON.stringify(c.blocks || []));
+  let dx = x - c.box.x0, dy = y - c.box.y0;
+  if (csegs.length || cblocks.length){
+    // circuit parts land a whole number of cells away, ink and all
+    const rg = circRange(circItems(csegs, cblocks)), G = CIRC.G;
+    const k = clamp(Math.round(dx / G), rg.loX, rg.hiX), m = clamp(Math.round(dy / G), rg.loY, rg.hiY);
+    csegs.forEach(sg => { sg.a = [sg.a[0] + k, sg.a[1] + m]; sg.b = [sg.b[0] + k, sg.b[1] + m]; });
+    cblocks.forEach(bl => { bl.gx += k; bl.gy += m; bl.id = uid(); });
+    dx = k * G; dy = m * G;
+  }
   pushUndo();
-  const list = c.strokes.map(st => shiftStroke(st, x - c.box.x0, y - c.box.y0));
+  const list = c.strokes.map(st => shiftStroke(st, dx, dy));
   pg.strokes = pg.strokes.concat(list);
-  ed.sel = {strokes:list, box:strokesBox(list)};
+  if (csegs.length || cblocks.length){
+    const cc = pageCircuit(pg);
+    cc.segs = cc.segs.concat(csegs); cc.blocks = cc.blocks.concat(cblocks);
+  }
+  ed.sel = {strokes:list, segs:csegs, blocks:cblocks, box:selBox(list, csegs, cblocks)};
   saveNote(); _cb.key = null; invalidateBase(); schedulePaint(); renderLassoBar();
   toast('Pasted - drag it into place');
 }
