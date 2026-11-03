@@ -302,6 +302,14 @@ section[hidden]{display:none !important}
 #lassoBar button{min-height:38px; padding:0 12px; border-radius:4px; background:var(--chip); color:var(--ink); font-size:11.5px; font-weight:700}
 #lassoBar button.danger{color:var(--danger)}
 #lassoBar button:hover{background:var(--accent); color:#fff}
+#solvePanel{position:fixed; left:50%; bottom:88px; transform:translateX(-50%); z-index:60; width:min(560px, calc(100% - 24px)); max-height:62vh;
+  display:flex; flex-direction:column; background:var(--surface); border:1.5px solid var(--accent); border-radius:8px; box-shadow:var(--lift-3)}
+#solvePanel[hidden]{display:none}
+#solvePanel .sv-h{display:flex; align-items:center; gap:6px; padding:8px 10px; border-bottom:1px solid var(--chip); font-size:12px; font-weight:700}
+#solvePanel .sv-h span{flex:1}
+#solvePanel button{min-height:38px; padding:0 12px; border-radius:4px; background:var(--chip); color:var(--ink); font-size:11.5px; font-weight:700}
+#solvePanel .sv-b{padding:12px 14px; overflow:auto; white-space:pre-wrap; font:14px/1.55 "Courier New", monospace; color:var(--ink); user-select:text; -webkit-user-select:text}
+#solvePanel .sv-b.err{color:var(--danger)}
 .bp-btns{display:flex; gap:8px; margin:2px 0 10px}
 .bp-btns .btn{flex:1; padding:9px 8px; font-size:12.5px; text-align:center}
 .bp-row{display:flex; align-items:center; gap:8px; width:100%; text-align:left; padding:8px 10px; border-radius:8px; background:var(--surface-2); margin-bottom:5px; font-size:13px; cursor:pointer}
@@ -4104,7 +4112,7 @@ function renderLassoBar(){
     ? '<span class="la-n">' + selCount(s) + ' selected</span>' +
       '<button data-la="copy">Copy</button><button data-la="cut">Cut</button>' +
       '<button data-la="del" class="danger">Delete</button>' +
-      (s.strokes.length ? '<button data-la="sheet">To formula sheet</button>' : '')
+      (s.strokes.length ? '<button data-la="solve">Solve maths</button><button data-la="sheet">To formula sheet</button>' : '')
     : '<span class="la-n">Draw a loop around writing or a circuit to select it</span>') +
     (c ? '<button data-la="paste">Paste</button>' : '');
   el.querySelectorAll('[data-la]').forEach(b => b.onclick = () => lassoAct(b.dataset.la));
@@ -4152,6 +4160,71 @@ async function lassoAct(act){
     return;
   }
   if (act === 'sheet') lassoToSheet();
+  if (act === 'solve') lassoSolve();
+}
+
+/* ---------- AI maths solver ----------
+   The lassoed handwriting is drawn black on white, sent as a PNG to the
+   `solve` Supabase function (supabase/functions/solve), which holds the
+   Anthropic key and replies with a worked solution. Needs the online account. */
+function strokesPng(list){
+  const b = strokesBox(list), pad = 28;
+  const k = Math.min(1, 1400 / Math.max(b.w + pad * 2, b.h + pad * 2));
+  const cv = document.createElement('canvas');
+  cv.width = Math.max(60, Math.round((b.w + pad * 2) * k)); cv.height = Math.max(60, Math.round((b.h + pad * 2) * k));
+  const g = cv.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height);
+  g.strokeStyle = '#000'; g.fillStyle = '#000'; g.lineCap = 'round'; g.lineJoin = 'round';
+  for (const st of list){
+    g.lineWidth = Math.max(2.5, (st.w || 4) * k);
+    const P = st.pts.map(q => [(q[0] - b.x0 + pad) * k, (q[1] - b.y0 + pad) * k]);
+    if (P.length === 1){ g.beginPath(); g.arc(P[0][0], P[0][1], g.lineWidth / 2, 0, 7); g.fill(); continue; }
+    g.beginPath(); g.moveTo(P[0][0], P[0][1]);
+    for (let i = 1; i < P.length; i++) g.lineTo(P[i][0], P[i][1]);
+    g.stroke();
+  }
+  return cv.toDataURL('image/png').split(',')[1];
+}
+function solvePanel(){
+  let el = $('#solvePanel');
+  if (!el){
+    el = document.createElement('div'); el.id = 'solvePanel'; el.hidden = true;
+    el.innerHTML = '<div class="sv-h"><span>Maths solver</span><button data-sv="copy">Copy</button><button data-sv="close">Close</button></div><div class="sv-b"></div>';
+    ($('#app') || document.body).appendChild(el);      // the theme variables live on #app
+    el.querySelector('[data-sv="close"]').onclick = () => { el.hidden = true; };
+    el.querySelector('[data-sv="copy"]').onclick = () => {
+      try { navigator.clipboard.writeText(el.querySelector('.sv-b').textContent); toast('Copied'); } catch(e){}
+    };
+  }
+  return el;
+}
+function showSolve(text, err){
+  const el = solvePanel(), b = el.querySelector('.sv-b');
+  b.textContent = text; b.classList.toggle('err', !!err); el.hidden = false;
+}
+let solveBusy = false;
+async function lassoSolve(){
+  const s = ed.sel; if (!s || !s.strokes.length || solveBusy) return;
+  const sess = sessionNow();
+  if (!(AUTH_CFG.provider === 'supabase' && AUTH_CFG.supabaseUrl)){
+    showSolve('The maths solver is not connected yet. It needs the online account and the solve function - see "AI maths solver" in README.md.', true); return;
+  }
+  if (!sess || !sess.token){ showSolve('Sign in to your online account to use the solver (sign out, then sign in again).', true); return; }
+  solveBusy = true; showSolve('Reading your handwriting and solving...');
+  try {
+    const r = await fetch(AUTH_CFG.supabaseUrl + '/functions/v1/solve', {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'apikey':AUTH_CFG.supabaseKey, 'Authorization':'Bearer ' + sess.token},
+      body: JSON.stringify({image: strokesPng(s.strokes)})
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401) throw new Error('Your sign-in has expired - sign out and sign in again');
+    if (!r.ok) throw new Error(j.error || 'The solver failed (' + r.status + ')');
+    showSolve(j.text || 'No answer came back.');
+  } catch(e){
+    showSolve(navigator.onLine ? String(e.message || e) : 'You are offline - the solver needs a connection.', true);
+  }
+  solveBusy = false;
 }
 /// Lands in the middle of what is on screen, selected, ready to be dragged.
 function lassoPaste(){

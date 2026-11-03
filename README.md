@@ -81,3 +81,21 @@ Limits worth knowing: the 85% result is a theoretical result for training on a t
 | `config.js` | public settings, including which sign-in provider to use |
 | `manifest.webmanifest`, `icon.svg` | installable-app details |
 | `.github/workflows/pages.yml` | publishes the site to GitHub Pages |
+
+## AI maths solver (lasso → Solve maths)
+
+Lasso some handwriting and press **Solve maths**: a picture of it goes to Claude and a worked solution
+comes back in a panel. It runs through a small Supabase function so the Anthropic key never reaches the
+browser. It needs the online account above (the function only answers signed-in users).
+
+One-time setup, from this folder, with the [Supabase CLI](https://supabase.com/docs/guides/cli) installed:
+
+```bash
+supabase login
+supabase link --project-ref YOUR_PROJECT_REF
+supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
+supabase functions deploy solve
+```
+
+The key comes from https://console.anthropic.com (API keys; billed per use, a few cents a solve).
+`SOLVER_MODEL` can be set as a secret the same way to pick a different Claude model.
