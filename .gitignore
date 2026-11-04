@@ -4,3 +4,4 @@ artifact.html
 .DS_Store
 node_modules/
 .claude/
+supabase/.temp/
