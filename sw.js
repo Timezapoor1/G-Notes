@@ -1,10 +1,16 @@
 /* G-NOTES service worker: the app opens with no network once it has been loaded
    once. Pages and scripts are fetched fresh when online and kept for when not;
    everything else (fonts, the PDF reader) is kept the first time it is used. */
-const CACHE = 'gnotes-b124';
+const CACHE = 'gnotes-b125';
 const SHELL = ['./', 'index.html', 'config.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // the PDF reader comes from a CDN: keep it with the app so question pictures
+  // still draw offline and survive an update clearing the old cache
+  const LIBS = ['https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'];
+  e.waitUntil(caches.open(CACHE).then(async c => {
+    await c.addAll(SHELL);
+    await Promise.all(LIBS.map(u => fetch(u, {mode:'no-cors'}).then(r => c.put(u, r)).catch(() => {})));
+  }).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));

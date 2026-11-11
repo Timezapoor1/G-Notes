@@ -2856,11 +2856,21 @@ function cropRec(){
 }
 /// Height of the printed question in page units, 0 when there is none yet.
 function cropH(){ const r = cropRec(); return r ? r.h : 0; }
+/// Say why a question's picture is missing - once - instead of leaving a blank.
+let noCropSaid = false;
+async function explainNoCrop(paper){
+  if (noCropSaid) return;
+  noCropSaid = true;
+  if (!window.pdfjsLib) toast('The PDF reader did not load - open the app once while online, then reopen it');
+  else if (!(await paperBytes(paper))) toast('This paper’s PDF is not stored on this device - attach it again from the Questions panel');
+  else toast('Could not draw this question from its PDF');
+}
 async function ensureCropImage(paper, q){
   if (!paper || !q || QIMG.has(q.id) || QIMG_PEND.has(q.id)) return;
   QIMG_PEND.add(q.id);
   let cv = null;
   try { cv = await cropCanvas(paper, q); } catch(e){}
+  if (!cv) explainNoCrop(paper);
   QIMG_PEND.delete(q.id);
   // remember a failure too, so a page that cannot be rendered is not retried
   // on every single frame
