@@ -1,7 +1,7 @@
 /* G-NOTES service worker: the app opens with no network once it has been loaded
    once. Pages and scripts are fetched fresh when online and kept for when not;
    everything else (fonts, the PDF reader) is kept the first time it is used. */
-const CACHE = 'gnotes-b126';
+const CACHE = 'gnotes-b127';
 const SHELL = ['./', 'index.html', 'config.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 self.addEventListener('install', e => {
   // the PDF reader comes from a CDN: keep it with the app so question pictures
@@ -26,7 +26,7 @@ self.addEventListener('fetch', e => {
     if (own){
       // network first so an update is picked up on the next load, the copy kept for offline
       try {
-        const r = await fetch(req);
+        const r = await fetch(req, {cache:'no-cache'});     // past the browser's own copy, so a new build is seen at once
         if (r && r.ok) cache.put(req, r.clone());
         return r;
       } catch(err){
