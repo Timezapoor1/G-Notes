@@ -2862,7 +2862,7 @@ async function explainNoCrop(paper){
   if (noCropSaid) return;
   noCropSaid = true;
   if (!window.pdfjsLib) toast('The PDF reader did not load - open the app once while online, then reopen it');
-  else if (!(await paperBytes(paper))) toast('This paper’s PDF is not stored on this device - attach it again from the Questions panel');
+  else if (!(await paperBytes(paper))) toast('This paper’s PDF is not stored on this device - use Backup › Restore question PDFs to put it back');
   else toast('Could not draw this question from its PDF');
 }
 async function ensureCropImage(paper, q){
@@ -6997,12 +6997,13 @@ $('#btnData').onclick = async () => {
   if (cloud.lastError) lines.push('<span style="color:var(--danger)">Account save failed (' + esc(cloud.lastError) +
     '). Still kept on this device.</span>');
   if (cloud.size) lines.push('Account copy ' + (cloud.size / 1048576).toFixed(2) + ' MB');
-  const btns = [{label:'Export a backup',value:'exp'},{label:'Import a backup',value:'imp'}];
+  const btns = [{label:'Export a backup',value:'exp'},{label:'Import a backup',value:'imp'},{label:'Restore question PDFs',value:'pdf'}];
   if (cloud.ok && cloud.ns) btns.push({label:'Sync now',value:'sync'});
   const r = await modal({title:'Your notebook', body:lines.join('<br>'), buttons:btns, anchor:$('#btnData')});
   if (!r) return;
   if (r.value === 'exp') exportData();
   if (r.value === 'imp') $('#importFile').click();
+  if (r.value === 'pdf') $('#pdfRestore').click();
   if (r.value === 'sync'){
     if (!cloud.ns){ toast('Looking for the runtime…'); await cloudInit(99); }
     if (!cloud.ns){ toast('Cloud unavailable: ' + (cloud.reason || 'unknown')); return; }
@@ -7030,6 +7031,38 @@ async function exportData(){
     toast('Notebook exported');
   } catch(e){ toast('Export failed'); }
 }
+/// A backup holds the notebook but not the PDFs behind its question pictures.
+/// Pick the PDFs again and each goes back under the paper that has the same
+/// name, so every note and question link keeps working.
+const pdfRestore = document.createElement('input');
+pdfRestore.type = 'file'; pdfRestore.accept = 'application/pdf,.pdf'; pdfRestore.multiple = true; pdfRestore.id = 'pdfRestore';
+pdfRestore.style.display = 'none'; document.body.appendChild(pdfRestore);
+const paperKey = nm => {
+  let t = String(nm || '');
+  try { t = decodeURIComponent(t.replace(/\+/g, ' ')); } catch(e){}
+  return t.replace(/\.pdf$/i, '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+};
+pdfRestore.onchange = async () => {
+  const files = [...pdfRestore.files]; pdfRestore.value = '';
+  if (!files.length) return;
+  if (!IDB.ok){ toast('This browser cannot store PDFs'); return; }
+  let papers = 0, skipped = 0;
+  for (const f of files){
+    const hits = (S.papers || []).filter(p => paperKey(p.name) === paperKey(f.name));
+    if (!hits.length){ skipped++; continue; }
+    const bytes = await f.arrayBuffer();
+    for (const p of hits){
+      if (await idbSet('pdf:' + p.id, bytes)){
+        p.assetId = null; p.url = null;
+        PDFMEM.bytes.set(p.id, bytes); PDFMEM.docs.delete(p.id); papers++;
+      }
+    }
+  }
+  PDFMEM.pages.clear(); QIMG.clear(); noCropSaid = false;
+  save(); invalidateBase(); schedulePaint();
+  toast(papers ? 'Restored ' + papers + ' paper' + (papers === 1 ? '' : 's') + (skipped ? ' (' + skipped + ' file' + (skipped === 1 ? '' : 's') + ' matched no paper)' : '')
+               : 'None of those PDFs match a paper in this notebook');
+};
 const importFile = document.createElement('input');
 importFile.type = 'file'; importFile.accept = 'application/json,.json'; importFile.id = 'importFile';
 importFile.style.display = 'none'; document.body.appendChild(importFile);
